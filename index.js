@@ -524,6 +524,8 @@ app.get('/api/client-status', (req, res) => {
     }
 
     const clientData = whatsappClient.getClientStatus(clientId);
+    console.log(req.query,clientData);
+    
     if (clientData.status === 'not_initialized' && !clientData.client) {
         return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
     }
