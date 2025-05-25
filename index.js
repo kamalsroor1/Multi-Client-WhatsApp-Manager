@@ -4,6 +4,7 @@ const whatsappService = require('./services/whatsappService');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 
 const app = express();
+const clients = {}; // <--- ADD THIS LINE
 
 // إعداد multer لرفع الملفات
 const storage = multer.memoryStorage();
