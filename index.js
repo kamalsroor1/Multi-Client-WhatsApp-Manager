@@ -1,14 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const whatsappService = require('./services/whatsappService');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode');
-const fs = require('fs');
-const path = require('path');
+const bodyParser = require('body-parser');
 
 
 const app = express();
-const clients = {}; // <--- ADD THIS LINE
+
+// Middlewares
+app.use(bodyParser.json());
 
 // إعداد multer لرفع الملفات
 const storage = multer.memoryStorage();
@@ -478,29 +477,9 @@ app.get('/api/dashboard-data', async (req, res) => { // Changed route to /api/da
 });
 
 
-// API لإرسال رسالة مع أو بدون صورة
-app.post('/api/send-message', upload.single('image'), async (req, res) => {
-    const { client_id, number, message } = req.body;
-    const imageFile = req.file;
-    
-    try {
-        let imageBuffer = null;
-        let imageMimeType = null;
-        
-        if (imageFile) {
-            imageBuffer = imageFile.buffer;
-            imageMimeType = imageFile.mimetype;
-        }
-        
-        await whatsappService.sendMessage(client_id, number, message, imageBuffer, imageMimeType);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Send message error:', err);
-        res.status(500).json({ success: false, error: err.message });
-    }
-});
 
-// API لتسجيل الخروج
+
+// API لتسجيل الدخول / إنشاء العميل
 app.post('/api/create-client', async (req, res) => {
     const clientId = req.body.client_id;
 
@@ -508,122 +487,84 @@ app.post('/api/create-client', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Client ID is required.' });
     }
 
-    if (clients[clientId]) {
-        // If client already exists, return its current status/QR
-        const clientData = clients[clientId];
+    // تحقق مما إذا كان العميل موجودًا بالفعل
+    const existingClientStatus = whatsappClient.getClientStatus(clientId);
+    if (existingClientStatus.status !== 'not_initialized') {
         return res.json({
             success: true,
-            status: clientData.status,
-            message: `Client ${clientId} already exists. Current status: ${clientData.status}.`,
-            qr: clientData.qr,
+            status: existingClientStatus.status,
+            message: `Client ${clientId} already exists. Current status: ${existingClientStatus.status}.`,
+            qr: existingClientStatus.qr,
         });
     }
 
-    const client = new Client({
-        authStrategy: new LocalAuth({ clientId: clientId }), // Store session in a folder per client ID
-        // puppeteer: { headless: true }, // Optional: run browser in headless mode
-        puppeteer: { 
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-        }
-    });
-
-    clients[clientId] = {
-        client: client,
-        status: 'initializing',
-        message: 'جاري تهيئة الواتساب...',
-        qr: null,
-    };
-
-    client.on('qr', async (qr) => {
-        const qrDataUrl = await qrcode.toDataURL(qr);
-        clients[clientId].qr = qrDataUrl;
-        clients[clientId].status = 'qr_ready';
-        clients[clientId].message = 'الرجاء مسح رمز QR من الواتساب.';
-        console.log(`QR received for client ${clientId}`);
-        // Optionally, emit via Socket.IO for real-time updates
-        io.to(clientId).emit('qr', qrDataUrl);
-        io.to(clientId).emit('status', clients[clientId].status);
-    });
-
-    client.on('ready', () => {
-        clients[clientId].status = 'authenticated';
-        clients[clientId].message = 'تم الاتصال بالواتساب بنجاح!';
-        clients[clientId].qr = null; // Clear QR after authentication
-        console.log(`Client ${clientId} is ready!`);
-        // Optionally, emit via Socket.IO
-        io.to(clientId).emit('status', clients[clientId].status);
-        io.to(clientId).emit('message', clients[clientId].message);
-        io.to(clientId).emit('qr', null); // Clear QR on client side
-    });
-
-    client.on('auth_failure', (msg) => {
-        clients[clientId].status = 'error';
-        clients[clientId].message = `فشل المصادقة: ${msg}`;
-        console.error(`Auth failure for client ${clientId}:`, msg);
-        // Optionally, emit via Socket.IO
-        io.to(clientId).emit('status', clients[clientId].status);
-        io.to(clientId).emit('message', clients[clientId].message);
-    });
-
-    client.on('disconnected', (reason) => {
-        clients[clientId].status = 'disconnected';
-        clients[clientId].message = `تم قطع الاتصال: ${reason}`;
-        console.log(`Client ${clientId} disconnected:`, reason);
-        // Optionally, emit via Socket.IO
-        io.to(clientId).emit('status', clients[clientId].status);
-        io.to(clientId).emit('message', clients[clientId].message);
-        clients[clientId].qr = null; // Clear QR on disconnect
-        client.destroy(); // Destroy the client instance
-        delete clients[clientId]; // Remove from clients object
-    });
-
-    client.initialize()
-        .then(() => {
-            console.log(`Client ${clientId} initialized.`);
-            res.json({
-                success: true,
-                status: clients[clientId].status,
-                message: clients[clientId].message,
-                qr: clients[clientId].qr, // May be null initially, updated on 'qr' event
-                client_id: clientId
-            });
-        })
-        .catch((err) => {
-            console.error(`Error initializing client ${clientId}:`, err);
-            clients[clientId].status = 'error';
-            clients[clientId].message = `خطأ في التهيئة: ${err.message}`;
-            res.status(500).json({ success: false, error: `Initialization error: ${err.message}` });
+    try {
+        await whatsappClient.initClient(clientId);
+        const clientData = whatsappClient.getClientStatus(clientId);
+        console.log(`Client ${clientId} initialized.`);
+        res.json({
+            success: true,
+            status: clientData.status,
+            message: 'جاري تهيئة الواتساب...',
+            qr: clientData.qr, // قد يكون null في البداية، يتم تحديثه عند حدث 'qr'
+            client_id: clientId
         });
+    } catch (err) {
+        console.error(`Error initializing client ${clientId}:`, err);
+        res.status(500).json({ success: false, error: `Initialization error: ${err.message}` });
+    }
 });
 
-// Endpoint to get the current status of a specific client
+// Endpoint للحصول على الحالة الحالية لعميل معين
 app.get('/api/client-status', (req, res) => {
     const clientId = req.query.client_id;
-    if (!clientId || !clients[clientId]) {
+    if (!clientId) {
+        return res.status(400).json({ success: false, error: 'Client ID is required.' });
+    }
+
+    const clientData = whatsappClient.getClientStatus(clientId);
+    if (clientData.status === 'not_initialized' && !clientData.client) {
         return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
     }
-    const clientData = clients[clientId];
+
+    let message = '';
+    switch (clientData.status) {
+        case 'initializing':
+            message = 'جاري تهيئة الواتساب...';
+            break;
+        case 'qr_ready':
+            message = 'الرجاء مسح رمز QR من الواتساب.';
+            break;
+        case 'authenticated':
+            message = 'تم الاتصال بالواتساب بنجاح!';
+            break;
+        case 'error':
+            message = `خطأ: ${clientData.error}`;
+            break;
+        default:
+            message = 'حالة غير معروفة.';
+    }
+
     res.json({
         success: true,
         clientStatus: {
             status: clientData.status,
-            message: clientData.message,
+            message: message,
             qr: clientData.qr,
+            ready: clientData.ready
         },
     });
 });
 
-// Endpoint to log out a client
+// Endpoint لتسجيل الخروج من عميل
 app.post('/api/logout', async (req, res) => {
     const clientId = req.body.client_id;
-    if (!clientId || !clients[clientId]) {
-        return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
+    if (!clientId) {
+        return res.status(400).json({ success: false, error: 'Client ID is required.' });
     }
 
     try {
-        await clients[clientId].client.logout(); // This also triggers 'disconnected' event
-        delete clients[clientId];
+        await whatsappClient.logout(clientId);
         console.log(`Client ${clientId} logged out.`);
         res.json({ success: true, message: 'Client logged out successfully.' });
     } catch (error) {
@@ -631,6 +572,41 @@ app.post('/api/logout', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+// Endpoint لإرسال رسالة
+app.post('/api/send-message', async (req, res) => {
+    const { clientId, number, message, imageBuffer, imageMimeType } = req.body;
+
+    if (!clientId || !number || (!message && !imageBuffer)) {
+        return res.status(400).json({ success: false, error: 'Client ID, number, and either message or image are required.' });
+    }
+
+    try {
+        await whatsappClient.sendMessage(clientId, number, message, imageBuffer, imageMimeType);
+        res.json({ success: true, message: 'Message sent successfully.' });
+    } catch (error) {
+        console.error(`Error sending message for client ${clientId}:`, error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Endpoint للحصول على جهات الاتصال
+app.get('/api/get-contacts', async (req, res) => {
+    const clientId = req.query.client_id;
+
+    if (!clientId) {
+        return res.status(400).json({ success: false, error: 'Client ID is required.' });
+    }
+
+    try {
+        const contacts = await whatsappClient.getContacts(clientId);
+        res.json({ success: true, contacts: contacts });
+    } catch (error) {
+        console.error(`Error getting contacts for client ${clientId}:`, error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 
 // معالجة أخطاء multer

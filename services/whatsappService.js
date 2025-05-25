@@ -33,6 +33,9 @@ async function initClient(clientId) {
         clients[clientId].status = 'qr_ready';
         clients[clientId].error = null;
         console.log(`🔄 QR generated for ${clientId}`);
+        // هنا يمكنك إضافة منطق لبث الـ QR إلى الواجهة الأمامية إذا كنت تستخدم Socket.IO
+        // io.to(clientId).emit('qr', clients[clientId].qr);
+        // io.to(clientId).emit('status', clients[clientId].status);
     });
 
     client.on('ready', () => {
@@ -41,6 +44,9 @@ async function initClient(clientId) {
         clients[clientId].status = 'authenticated';
         clients[clientId].error = null;
         console.log(`✅ Client ${clientId} is ready`);
+        // io.to(clientId).emit('status', clients[clientId].status);
+        // io.to(clientId).emit('message', 'تم الاتصال بالواتساب بنجاح!');
+        // io.to(clientId).emit('qr', null);
     });
 
     client.on('auth_failure', async (message) => {
@@ -61,6 +67,8 @@ async function initClient(clientId) {
         // إعادة التهيئة
         console.log(`🔁 Reinitializing client ${clientId} after auth failure...`);
         await initClient(clientId);
+        // io.to(clientId).emit('status', clients[clientId]?.status || 'error');
+        // io.to(clientId).emit('message', clients[clientId]?.error || 'Authentication failed');
     });
 
     client.on('disconnected', async (reason) => {
@@ -81,6 +89,8 @@ async function initClient(clientId) {
         // إعادة التهيئة
         console.log(`🔁 Reinitializing client ${clientId} after disconnect...`);
         await initClient(clientId);
+        // io.to(clientId).emit('status', clients[clientId]?.status || 'error');
+        // io.to(clientId).emit('message', clients[clientId]?.error || `Disconnected: ${reason}`);
     });
 
     client.initialize();
