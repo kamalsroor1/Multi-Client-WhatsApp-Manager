@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
-const whatsappService = require('./services/whatsappService');
+const whatsappClient = require('./services/whatsappService'); // تأكد من المسار الصحيح لملفك
+
 const bodyParser = require('body-parser');
 
 
