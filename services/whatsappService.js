@@ -47,9 +47,15 @@ async function initClient(clientId) {
     });
 
     client.on('loading_screen', () => {
+
+        clients[clientId].qr = null;
+        clients[clientId].ready = false;
+        clients[clientId].status = 'loading_screen';
+        clients[clientId].error = null;
+
         console.log(`✅ Client ${clientId} is loading_screen`);
     });
-    
+
     client.on('remote_session_saved', () => {
         console.log(`✅ Client ${clientId} is remote_session_saved`);
     });

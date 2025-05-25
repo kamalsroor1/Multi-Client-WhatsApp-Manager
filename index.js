@@ -534,6 +534,9 @@ app.get('/api/client-status', (req, res) => {
         case 'initializing':
             message = 'جاري تهيئة الواتساب...';
             break;
+        case 'loading_screen':
+            message = 'جاري الاتصال...';
+            break;
         case 'qr_ready':
             message = 'الرجاء مسح رمز QR من الواتساب.';
             break;
