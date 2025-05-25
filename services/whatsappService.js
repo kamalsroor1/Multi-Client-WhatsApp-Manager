@@ -38,6 +38,10 @@ async function initClient(clientId) {
         // io.to(clientId).emit('status', clients[clientId].status);
     });
 
+    client.on('call', () => {
+        console.log(`✅ Client ${clientId} is call`);
+    });
+
     client.on('ready', () => {
         clients[clientId].qr = null;
         clients[clientId].ready = true;
