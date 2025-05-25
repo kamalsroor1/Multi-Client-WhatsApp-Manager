@@ -39,15 +39,15 @@ app.get('/dashboard', async (req, res) => {
     
     if (!clientId) return res.status(400).send("client_id is required");
 
-    await whatsappService.initClient(clientId);
-    const clientStatus = whatsappService.getClientStatus(clientId);
+    await whatsappClient.initClient(clientId);
+    const clientStatus = whatsappClient.getClientStatus(clientId);
     
     let contactsHtml = '';
     let paginationHtml = '';
     
     if (clientStatus.ready) {
         try {
-            const allContacts = await whatsappService.getContacts(clientId);
+            const allContacts = await whatsappClient.getContacts(clientId);
             
             // فلترة جهات الاتصال حسب البحث
             const filteredContacts = search ? 
@@ -344,7 +344,7 @@ app.post('/send-message', upload.single('image'), async (req, res) => {
             imageMimeType = imageFile.mimetype;
         }
         
-        await whatsappService.sendMessage(client_id, number, message, imageBuffer, imageMimeType);
+        await whatsappClient.sendMessage(client_id, number, message, imageBuffer, imageMimeType);
         res.json({ success: true });
     } catch (err) {
         console.error('Send message error:', err);
@@ -356,7 +356,7 @@ app.post('/send-message', upload.single('image'), async (req, res) => {
 app.post('/logout', async (req, res) => {
     const { client_id } = req.body;
     try {
-        await whatsappService.logout(client_id);
+        await whatsappClient.logout(client_id);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -430,8 +430,8 @@ app.get('/api/dashboard-data', async (req, res) => { // Changed route to /api/da
     }
 
     try {
-        await whatsappService.initClient(clientId);
-        const clientStatus = whatsappService.getClientStatus(clientId);
+        await whatsappClient.initClient(clientId);
+        const clientStatus = whatsappClient.getClientStatus(clientId);
 
         let contacts = [];
         let totalContacts = 0;
@@ -440,7 +440,7 @@ app.get('/api/dashboard-data', async (req, res) => { // Changed route to /api/da
         let endIndex = 0;
 
         if (clientStatus.ready) {
-            const allContacts = await whatsappService.getContacts(clientId);
+            const allContacts = await whatsappClient.getContacts(clientId);
 
             const filteredContacts = search ?
                 allContacts.filter(contact =>
@@ -524,7 +524,6 @@ app.get('/api/client-status', (req, res) => {
     }
 
     const clientData = whatsappClient.getClientStatus(clientId);
-    console.log(req.query,clientData);
     
     if (clientData.status === 'not_initialized' && !clientData.client) {
         return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
