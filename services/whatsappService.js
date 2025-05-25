@@ -41,6 +41,10 @@ async function initClient(clientId) {
     client.on('call', () => {
         console.log(`✅ Client ${clientId} is call`);
     });
+    
+    client.on('authenticated', () => {
+        console.log(`✅ Client ${clientId} is authenticated`);
+    });
 
     client.on('ready', () => {
         clients[clientId].qr = null;
