@@ -2,6 +2,10 @@ const express = require('express');
 const multer = require('multer');
 const whatsappService = require('./services/whatsappService');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const qrcode = require('qrcode');
+const fs = require('fs');
+const path = require('path');
+
 
 const app = express();
 const clients = {}; // <--- ADD THIS LINE
