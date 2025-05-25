@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const whatsappService = require('./services/whatsappService');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 
 const app = express();
 
@@ -516,6 +517,10 @@ app.post('/api/create-client', async (req, res) => {
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: clientId }), // Store session in a folder per client ID
         // puppeteer: { headless: true }, // Optional: run browser in headless mode
+        puppeteer: { 
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        }
     });
 
     clients[clientId] = {
