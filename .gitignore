@@ -54,6 +54,9 @@ web_modules/
 # Optional eslint cache
 .eslintcache
 
+.wwebjs_cache/
+.wwebjs_auth/
+
 # Optional stylelint cache
 .stylelintcache
 
