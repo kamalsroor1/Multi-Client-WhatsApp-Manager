@@ -410,6 +410,219 @@ app.get('/test', (req, res) => {
 
 
 
+// ... (rest of your existing Node.js code)
+
+// API to get dashboard data (status, contacts, pagination info)
+app.get('/api/dashboard-data', async (req, res) => { // Changed route to /api/dashboard-data
+    const clientId = req.query.client_id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const search = req.query.search || '';
+
+    if (!clientId) {
+        return res.status(400).json({ success: false, error: "client_id is required" });
+    }
+
+    try {
+        await whatsappService.initClient(clientId);
+        const clientStatus = whatsappService.getClientStatus(clientId);
+
+        let contacts = [];
+        let totalContacts = 0;
+        let totalPages = 0;
+        let startIndex = 0;
+        let endIndex = 0;
+
+        if (clientStatus.ready) {
+            const allContacts = await whatsappService.getContacts(clientId);
+
+            const filteredContacts = search ?
+                allContacts.filter(contact =>
+                    contact.name.toLowerCase().includes(search.toLowerCase()) ||
+                    contact.number.includes(search)
+                ) : allContacts;
+
+            totalContacts = filteredContacts.length;
+            totalPages = Math.ceil(totalContacts / limit);
+            startIndex = (page - 1) * limit;
+            endIndex = startIndex + limit;
+            contacts = filteredContacts.slice(startIndex, endIndex);
+        }
+
+        res.json({
+            success: true,
+            clientId: clientId,
+            clientStatus: clientStatus,
+            contacts: contacts,
+            pagination: {
+                page: page,
+                limit: limit,
+                totalContacts: totalContacts,
+                totalPages: totalPages,
+                startIndex: startIndex,
+                endIndex: endIndex,
+                search: search
+            }
+        });
+
+    } catch (err) {
+        console.error('Error fetching dashboard data:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
+// API لإرسال رسالة مع أو بدون صورة
+app.post('/api/send-message', upload.single('image'), async (req, res) => {
+    const { client_id, number, message } = req.body;
+    const imageFile = req.file;
+    
+    try {
+        let imageBuffer = null;
+        let imageMimeType = null;
+        
+        if (imageFile) {
+            imageBuffer = imageFile.buffer;
+            imageMimeType = imageFile.mimetype;
+        }
+        
+        await whatsappService.sendMessage(client_id, number, message, imageBuffer, imageMimeType);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Send message error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// API لتسجيل الخروج
+app.post('/api/create-client', async (req, res) => {
+    const clientId = req.body.client_id;
+
+    if (!clientId) {
+        return res.status(400).json({ success: false, error: 'Client ID is required.' });
+    }
+
+    if (clients[clientId]) {
+        // If client already exists, return its current status/QR
+        const clientData = clients[clientId];
+        return res.json({
+            success: true,
+            status: clientData.status,
+            message: `Client ${clientId} already exists. Current status: ${clientData.status}.`,
+            qr: clientData.qr,
+        });
+    }
+
+    const client = new Client({
+        authStrategy: new LocalAuth({ clientId: clientId }), // Store session in a folder per client ID
+        // puppeteer: { headless: true }, // Optional: run browser in headless mode
+    });
+
+    clients[clientId] = {
+        client: client,
+        status: 'initializing',
+        message: 'جاري تهيئة الواتساب...',
+        qr: null,
+    };
+
+    client.on('qr', async (qr) => {
+        const qrDataUrl = await qrcode.toDataURL(qr);
+        clients[clientId].qr = qrDataUrl;
+        clients[clientId].status = 'qr_ready';
+        clients[clientId].message = 'الرجاء مسح رمز QR من الواتساب.';
+        console.log(`QR received for client ${clientId}`);
+        // Optionally, emit via Socket.IO for real-time updates
+        io.to(clientId).emit('qr', qrDataUrl);
+        io.to(clientId).emit('status', clients[clientId].status);
+    });
+
+    client.on('ready', () => {
+        clients[clientId].status = 'authenticated';
+        clients[clientId].message = 'تم الاتصال بالواتساب بنجاح!';
+        clients[clientId].qr = null; // Clear QR after authentication
+        console.log(`Client ${clientId} is ready!`);
+        // Optionally, emit via Socket.IO
+        io.to(clientId).emit('status', clients[clientId].status);
+        io.to(clientId).emit('message', clients[clientId].message);
+        io.to(clientId).emit('qr', null); // Clear QR on client side
+    });
+
+    client.on('auth_failure', (msg) => {
+        clients[clientId].status = 'error';
+        clients[clientId].message = `فشل المصادقة: ${msg}`;
+        console.error(`Auth failure for client ${clientId}:`, msg);
+        // Optionally, emit via Socket.IO
+        io.to(clientId).emit('status', clients[clientId].status);
+        io.to(clientId).emit('message', clients[clientId].message);
+    });
+
+    client.on('disconnected', (reason) => {
+        clients[clientId].status = 'disconnected';
+        clients[clientId].message = `تم قطع الاتصال: ${reason}`;
+        console.log(`Client ${clientId} disconnected:`, reason);
+        // Optionally, emit via Socket.IO
+        io.to(clientId).emit('status', clients[clientId].status);
+        io.to(clientId).emit('message', clients[clientId].message);
+        clients[clientId].qr = null; // Clear QR on disconnect
+        client.destroy(); // Destroy the client instance
+        delete clients[clientId]; // Remove from clients object
+    });
+
+    client.initialize()
+        .then(() => {
+            console.log(`Client ${clientId} initialized.`);
+            res.json({
+                success: true,
+                status: clients[clientId].status,
+                message: clients[clientId].message,
+                qr: clients[clientId].qr, // May be null initially, updated on 'qr' event
+                client_id: clientId
+            });
+        })
+        .catch((err) => {
+            console.error(`Error initializing client ${clientId}:`, err);
+            clients[clientId].status = 'error';
+            clients[clientId].message = `خطأ في التهيئة: ${err.message}`;
+            res.status(500).json({ success: false, error: `Initialization error: ${err.message}` });
+        });
+});
+
+// Endpoint to get the current status of a specific client
+app.get('/api/client-status', (req, res) => {
+    const clientId = req.query.client_id;
+    if (!clientId || !clients[clientId]) {
+        return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
+    }
+    const clientData = clients[clientId];
+    res.json({
+        success: true,
+        clientStatus: {
+            status: clientData.status,
+            message: clientData.message,
+            qr: clientData.qr,
+        },
+    });
+});
+
+// Endpoint to log out a client
+app.post('/api/logout', async (req, res) => {
+    const clientId = req.body.client_id;
+    if (!clientId || !clients[clientId]) {
+        return res.status(404).json({ success: false, error: 'Client not found or ID missing.' });
+    }
+
+    try {
+        await clients[clientId].client.logout(); // This also triggers 'disconnected' event
+        delete clients[clientId];
+        console.log(`Client ${clientId} logged out.`);
+        res.json({ success: true, message: 'Client logged out successfully.' });
+    } catch (error) {
+        console.error(`Error logging out client ${clientId}:`, error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
 // معالجة أخطاء multer
 app.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
