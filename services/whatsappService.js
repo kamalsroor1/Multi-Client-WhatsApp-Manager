@@ -41,9 +41,17 @@ async function initClient(clientId) {
     client.on('call', () => {
         console.log(`✅ Client ${clientId} is call`);
     });
-    
+
     client.on('authenticated', () => {
         console.log(`✅ Client ${clientId} is authenticated`);
+    });
+
+    client.on('loading_screen', () => {
+        console.log(`✅ Client ${clientId} is loading_screen`);
+    });
+    
+    client.on('remote_session_saved', () => {
+        console.log(`✅ Client ${clientId} is remote_session_saved`);
     });
 
     client.on('ready', () => {
