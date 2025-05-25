@@ -12,7 +12,11 @@ async function initClient(clientId) {
 
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: `client-${clientId}` }),
-        puppeteer: { headless: true }
+        // puppeteer: { headless: true }
+        puppeteer: { 
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        }
     });
 
     clients[clientId] = { 
