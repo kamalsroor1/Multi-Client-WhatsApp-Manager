@@ -54,25 +54,25 @@ class ErrorMiddleware {
         return ApiResponse.error(res, `Route ${req.originalUrl} not found`, 404, {
             method: req.method,
             path: req.originalUrl,
-            available_endpoints: {
-                'POST /api/whatsapp/init': 'Initialize WhatsApp session',
-                'GET /api/whatsapp/status': 'Get session status',
-                'GET /api/whatsapp/contacts/progress': 'Get contact fetching progress',
-                'GET /api/whatsapp/groups': 'Get user groups',
-                'GET /api/whatsapp/groups/:group_id/contacts': 'Get contacts by group',
-                'POST /api/whatsapp/groups': 'Create custom group',
-                'PUT /api/whatsapp/groups/:group_id/contacts': 'Update group contacts',
-                'DELETE /api/whatsapp/groups/:group_id': 'Delete group',
-                'GET /api/whatsapp/contacts/search': 'Search contacts',
-                'GET /api/whatsapp/contacts/:contact_id': 'Get contact by ID',
-                'POST /api/whatsapp/send-message': 'Send message to contact',
-                'POST /api/whatsapp/groups/:group_id/send-message': 'Send message to group',
-                'POST /api/whatsapp/send-bulk-messages': 'Send bulk messages',
-                'GET /api/whatsapp/messages': 'Get message logs',
-                'POST /api/whatsapp/logout': 'Logout session',
-                'POST /api/whatsapp/test-image-url': 'Test image URL validity',
-                'GET /api/health': 'Health check'
-            }
+            // available_endpoints: {
+            //     'POST /api/whatsapp/init': 'Initialize WhatsApp session',
+            //     'GET /api/whatsapp/status': 'Get session status',
+            //     'GET /api/whatsapp/contacts/progress': 'Get contact fetching progress',
+            //     'GET /api/whatsapp/groups': 'Get user groups',
+            //     'GET /api/whatsapp/groups/:group_id/contacts': 'Get contacts by group',
+            //     'POST /api/whatsapp/groups': 'Create custom group',
+            //     'PUT /api/whatsapp/groups/:group_id/contacts': 'Update group contacts',
+            //     'DELETE /api/whatsapp/groups/:group_id': 'Delete group',
+            //     'GET /api/whatsapp/contacts/search': 'Search contacts',
+            //     'GET /api/whatsapp/contacts/:contact_id': 'Get contact by ID',
+            //     'POST /api/whatsapp/send-message': 'Send message to contact',
+            //     'POST /api/whatsapp/groups/:group_id/send-message': 'Send message to group',
+            //     'POST /api/whatsapp/send-bulk-messages': 'Send bulk messages',
+            //     'GET /api/whatsapp/messages': 'Get message logs',
+            //     'POST /api/whatsapp/logout': 'Logout session',
+            //     'POST /api/whatsapp/test-image-url': 'Test image URL validity',
+            //     'GET /api/health': 'Health check'
+            // }
         });
     }
 

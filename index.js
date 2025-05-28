@@ -244,7 +244,7 @@ app.use((req, res, next) => {
 });
 
 // 404 handler
-app.use('*', errorMiddleware.handle404);
+// app.use('*', errorMiddleware.handle404);
 
 // Global error handler
 app.use(errorMiddleware.handleError);
