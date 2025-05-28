@@ -563,8 +563,44 @@ class WhatsAppService {
     }
 
     /**
-     * Start background contact fetching - now exposed as API endpoint
-     * Enhanced with better error handling and validation
+     * Recreate client from existing session data
+     */
+    async recreateClientFromSession(sessionData) {
+        try {
+            this.logger.info(`Recreating client for session: ${sessionData.session_id}`);
+            
+            // Create new client
+            const client = await this.clientFactory.createClient(sessionData.session_id);
+            
+            // Setup event handlers
+            const eventHandlers = this.createEventHandlers(sessionData);
+            this.clientFactory.setupClientEventHandlers(client, sessionData.session_id, eventHandlers);
+            
+            // Store client
+            this.clientFactory.storeClient(sessionData.session_id, client, sessionData);
+            
+            // Initialize client (this will restore from saved session data)
+            client.initialize();
+            
+            // Wait a moment for client to be ready
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Check if client is ready
+            const isReady = await this.clientFactory.isClientReady(sessionData.session_id);
+            if (!isReady) {
+                throw new Error('Recreated client is not ready');
+            }
+            
+            return client;
+            
+        } catch (error) {
+            this.logger.error(`Error recreating client for session ${sessionData.session_id}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Start background contact fetching - Enhanced with client recreation for completed sessions
      */
     async startBackgroundContactFetch(userId, placeId) {
         try {
@@ -581,12 +617,32 @@ class WhatsAppService {
             }
 
             // Check session status
-            if (!['ready', 'connected'].includes(sessionData.status)) {
+            if (!['ready', 'connected', 'completed'].includes(sessionData.status)) {
                 throw new Error(`Cannot start contact fetch. Session status: ${sessionData.status}. Please ensure session is ready.`);
             }
 
-            // Get client with enhanced validation
-            const { client } = await this.getClientByCredentials(userId, placeId);
+            let client;
+            
+            // Try to get existing client or recreate it
+            try {
+                const clientData = await this.getClientByCredentials(userId, placeId);
+                client = clientData.client;
+                this.logger.info(`Using existing client for session: ${sessionData.session_id}`);
+            } catch (clientError) {
+                // If client is not available, try to recreate it for completed sessions
+                if (sessionData.status === 'completed' || sessionData.status === 'ready') {
+                    this.logger.info(`Client not available, attempting to recreate for session: ${sessionData.session_id}`);
+                    try {
+                        client = await this.recreateClientFromSession(sessionData);
+                        this.logger.success(`Client recreated successfully for session: ${sessionData.session_id}`);
+                    } catch (recreateError) {
+                        this.logger.error(`Failed to recreate client: ${recreateError.message}`);
+                        throw new Error(`Cannot start contact fetch: ${clientError.message}. Failed to recreate client: ${recreateError.message}`);
+                    }
+                } else {
+                    throw clientError;
+                }
+            }
             
             this.logger.info(`Contact fetch starting for session: ${sessionData.session_id}`);
 
