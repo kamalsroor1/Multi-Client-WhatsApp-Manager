@@ -20,16 +20,16 @@ class GroupService {
 
     /**
      * Create default groups when contacts are imported
-     * Modified to prevent duplicate groups and always create "اخر الارقام (90 يوم)" even if empty
+     * Modified to update existing groups with new contacts instead of skipping them
      */
     async createDefaultGroups(userId, placeId, sessionId, contacts = []) {
         try {
-            this.logger.start(`Creating default groups for user ${userId}`);
+            this.logger.start(`Creating/updating default groups for user ${userId}`);
             
             const now = new Date();
             const ninetyDaysAgo = new Date(now.getTime() - (90 * 24 * 60 * 60 * 1000));
             
-            // Check existing groups to prevent duplicates
+            // Get existing auto groups
             const existingGroups = await ContactGroup.find({
                 user_id: userId,
                 place_id: placeId,
@@ -37,40 +37,62 @@ class GroupService {
                 is_active: true
             });
 
-            const existingGroupNames = existingGroups.map(group => group.name);
-            this.logger.info(`Found ${existingGroups.length} existing auto groups: ${existingGroupNames.join(', ')}`);
+            const existingGroupsMap = {};
+            existingGroups.forEach(group => {
+                existingGroupsMap[group.name] = group;
+            });
+
+            this.logger.info(`Found ${existingGroups.length} existing auto groups: ${Object.keys(existingGroupsMap).join(', ')}`);
             
             const groupsToCreate = [];
+            const groupsToUpdate = [];
             
-            // All Contacts group - only create if doesn't exist
-            if (!existingGroupNames.includes('جميع الارقام')) {
+            // All Contacts group
+            const allContactsName = 'جميع الارقام';
+            if (existingGroupsMap[allContactsName]) {
+                // Update existing group
+                const existingGroup = existingGroupsMap[allContactsName];
+                existingGroup.contact_ids = contacts.map(c => c._id);
+                existingGroup.updated_at = new Date();
+                groupsToUpdate.push(existingGroup);
+                this.logger.info(`Will update "${allContactsName}" group with ${contacts.length} contacts`);
+            } else {
+                // Create new group
                 groupsToCreate.push({
                     user_id: userId,
                     place_id: placeId,
                     session_id: sessionId,
                     group_id: this.generateGroupId(userId, placeId, 'all'),
-                    name: 'جميع الارقام',
+                    name: allContactsName,
                     description: 'All WhatsApp contacts',
                     contact_ids: contacts.map(c => c._id),
                     group_type: 'auto',
                     filter_criteria: {}
                 });
-            } else {
-                this.logger.info('Group "جميع الارقام" already exists, skipping creation');
+                this.logger.info(`Will create "${allContactsName}" group with ${contacts.length} contacts`);
             }
             
-            // Recent Contacts group (last 90 days) - always create if doesn't exist, even if empty
-            if (!existingGroupNames.includes('اخر الارقام (90 يوم)')) {
-                const recentContacts = contacts.filter(contact => 
-                    contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
-                );
-                
+            // Recent Contacts group (last 90 days)
+            const recentContactsName = 'اخر الارقام (90 يوم)';
+            const recentContacts = contacts.filter(contact => 
+                contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
+            );
+            
+            if (existingGroupsMap[recentContactsName]) {
+                // Update existing group
+                const existingGroup = existingGroupsMap[recentContactsName];
+                existingGroup.contact_ids = recentContacts.map(c => c._id);
+                existingGroup.updated_at = new Date();
+                groupsToUpdate.push(existingGroup);
+                this.logger.info(`Will update "${recentContactsName}" group with ${recentContacts.length} contacts`);
+            } else {
+                // Create new group
                 groupsToCreate.push({
                     user_id: userId,
                     place_id: placeId,
                     session_id: sessionId,
                     group_id: this.generateGroupId(userId, placeId, 'recent'),
-                    name: 'اخر الارقام (90 يوم)',
+                    name: recentContactsName,
                     description: 'Contacts with activity in the last 90 days',
                     contact_ids: recentContacts.map(c => c._id),
                     group_type: 'auto',
@@ -78,20 +100,28 @@ class GroupService {
                         last_interaction_days: 90
                     }
                 });
-                
-                this.logger.info(`Will create "اخر الارقام (90 يوم)" group with ${recentContacts.length} contacts`);
-            } else {
-                this.logger.info('Group "اخر الارقام (90 يوم)" already exists, skipping creation');
+                this.logger.info(`Will create "${recentContactsName}" group with ${recentContacts.length} contacts`);
             }
             
-            // Create only new groups
+            // Create new groups
             let createdGroups = [];
             if (groupsToCreate.length > 0) {
                 createdGroups = await ContactGroup.insertMany(groupsToCreate);
-                this.logger.success(`Created ${createdGroups.length} new default groups for user ${userId}`);
-            } else {
-                this.logger.info('No new groups to create - all default groups already exist');
+                this.logger.success(`Created ${createdGroups.length} new default groups`);
             }
+            
+            // Update existing groups
+            let updatedGroups = [];
+            if (groupsToUpdate.length > 0) {
+                for (const group of groupsToUpdate) {
+                    await group.save();
+                    updatedGroups.push(group);
+                }
+                this.logger.success(`Updated ${updatedGroups.length} existing default groups`);
+            }
+            
+            // Log summary
+            this.logger.success(`Groups processed: ${createdGroups.length} created, ${updatedGroups.length} updated for user ${userId}`);
             
             // Return all groups (existing + newly created)
             const allGroups = await ContactGroup.find({
@@ -104,8 +134,8 @@ class GroupService {
             return allGroups;
             
         } catch (error) {
-            this.logger.error('Error creating default groups:', error);
-            throw new Error(`Failed to create default groups: ${error.message}`);
+            this.logger.error('Error creating/updating default groups:', error);
+            throw new Error(`Failed to create/update default groups: ${error.message}`);
         }
     }
 
