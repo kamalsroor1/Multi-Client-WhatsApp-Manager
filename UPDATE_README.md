@@ -38,11 +38,59 @@ Content-Type: application/json
     "data": {
         "success": true,
         "message": "Background contact fetch started",
-        "session_id": "session_123_456_1234567890"
+        "session_id": "session_123_456_1234567890",
+        "current_status": "ready"
     },
     "message": "Background contact fetch started successfully"
 }
 ```
+
+### 3. إصلاح مشكلة "Client not available"
+
+تم تحسين التعامل مع خطأ "Client not available" من خلال:
+
+#### التحسينات في `WhatsAppService.js`:
+- **فحص أفضل لحالة الكلايت** قبل محاولة الوصول إليه
+- **تحديث تلقائي لحالة الجلسة** عندما يكون الكلايت غير متاح
+- **رسائل خطأ أوضح** مع تفاصيل الحالة الحالية
+- **التحقق من جاهزية الكلايت** قبل تشغيل العمليات
+
+#### التحسينات في `WhatsAppController.js`:
+- **فحص مسبق للجلسة** قبل محاولة بدء جلب الأرقام
+- **رسائل خطأ مفصلة** حسب نوع المشكلة
+- **توصيات واضحة** للمستخدم حول كيفية الإصلاح
+
+## أنواع الأخطاء وحلولها
+
+### 🔴 "No WhatsApp session found"
+```json
+{
+    "success": false,
+    "message": "No WhatsApp session found. Please initialize a session first.",
+    "status_code": 404
+}
+```
+**الحل:** قم بتهيئة جلسة جديدة باستخدام `/api/whatsapp/init`
+
+### 🟡 "Session is not ready"
+```json
+{
+    "success": false,
+    "message": "Session is not ready for contact fetch. Current status: qr_ready. Please wait for session to be ready or restart the session.",
+    "status_code": 400
+}
+```
+**الحل:** انتظر حتى تصبح الجلسة `ready` أو أعد تشغيلها
+
+### 🔴 "WhatsApp client is not available"
+```json
+{
+    "success": false,
+    "message": "WhatsApp client is not available. Please restart the session and try again.",
+    "status_code": 503
+}
+```
+**الحل:** أعد تشغيل الجلسة باستخدام `/api/whatsapp/restart`
 
 ## كيفية الاستخدام
 
@@ -60,7 +108,12 @@ POST /api/whatsapp/init
 GET /api/whatsapp/status?user_id=123&place_id=456
 ```
 
-### 3. بدء جلب الأرقام يدوياً (عند الحاجة)
+### 3. التأكد من جاهزية الجلسة قبل جلب الأرقام
+```http
+GET /api/whatsapp/info?user_id=123&place_id=456
+```
+
+### 4. بدء جلب الأرقام (عندما تكون الجلسة جاهزة)
 ```http
 POST /api/whatsapp/start-contact-fetch
 {
@@ -69,7 +122,7 @@ POST /api/whatsapp/start-contact-fetch
 }
 ```
 
-### 4. عرض المجموعات
+### 5. عرض المجموعات
 ```http
 GET /api/whatsapp/groups?user_id=123&place_id=456
 ```
@@ -85,11 +138,18 @@ GET /api/whatsapp/groups?user_id=123&place_id=456
 - الجلسة تصبح جاهزة بسرعة
 - المجموعات متاحة فوراً
 - لا انتظار لجلب الأرقام
+- رسائل خطأ واضحة ومفيدة
 
 ### 3. مرونة في الاستخدام
 - يمكن جلب الأرقام في وقت لاحق
 - يمكن جلب الأرقام عدة مرات
 - سيطرة كاملة على عملية الجلب
+- إصلاح تلقائي لحالات الخطأ
+
+### 4. استقرار أفضل
+- التعامل مع انقطاع الكلايت
+- تحديث تلقائي لحالة الجلسة
+- فحص شامل قبل العمليات
 
 ## ملاحظات مهمة
 
@@ -107,9 +167,17 @@ GET /api/whatsapp/groups?user_id=123&place_id=456
 - يتطلب جلسة نشطة وجاهزة
 - يعمل في الخلفية (non-blocking)
 - تحديث فوري لحالة التقدم
+- فحص مسبق لصحة الجلسة
+
+### إدارة الأخطاء
+- رسائل خطأ واضحة ومفيدة
+- أكواد HTTP مناسبة
+- توصيات للإصلاح
+- تحديث تلقائي لحالة الجلسة
 
 ## رسائل اللوج المحدثة
 
+### عند إنشاء المجموعات:
 ```
 ✅ Session ready: session_123_456_1234567890
 🏗️ Creating default groups for session: session_123_456_1234567890
@@ -118,20 +186,48 @@ GET /api/whatsapp/groups?user_id=123&place_id=456
 ✅ Created 2 default groups for session: session_123_456_1234567890
 ```
 
+### عند بدء جلب الأرقام:
 ```
-ℹ️ Starting manual contact fetch for user 123, place 456
-⚡ Background contact fetch for session: session_123_456_1234567890
+ℹ️ Attempting to start contact fetch for user 123, place 456
+ℹ️ Starting background contact fetch for user 123, place 456
+⚡ Contact fetch starting for session: session_123_456_1234567890
 ✅ Background contact fetch started successfully
 ```
 
+### عند حدوث خطأ:
+```
+⚠️ Client not found in memory for session session_123_456_1234567890, updating status
+🔄 Session status updated to disconnected
+❌ Error starting contact fetch: Client not available - session may have been disconnected
+```
+
+## الحالات المدعومة
+
+### ✅ حالات النجاح:
+- جلسة جاهزة ومتصلة
+- كلايت متاح في الذاكرة
+- عدم وجود عمليات جلب أخرى قيد التشغيل
+
+### ⚠️ حالات التحذير:
+- جلسة موجودة لكن غير جاهزة
+- كلايت غير متاح مؤقتاً
+- جلسة تحتاج إعادة تشغيل
+
+### ❌ حالات الخطأ:
+- لا توجد جلسة
+- جلسة في حالة خطأ
+- كلايت غير متاح نهائياً
+
 ## Health Check محدث
 
-الآن يشير إلى أن جلب الأرقام "ON DEMAND":
+الآن يشير إلى أن جلب الأرقام "ON DEMAND" مع فحص أفضل للجلسات:
 
 ```json
 {
     "features": {
-        "background_contact_fetching": "ON DEMAND"
+        "background_contact_fetching": "ON DEMAND",
+        "error_handling": true,
+        "session_recovery": true
     }
 }
 ```
