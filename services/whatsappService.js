@@ -291,7 +291,7 @@ async function initClient(userId, placeId) {
                 
                 const clientInfo = client.info;
                 sessionData.phone_number = clientInfo.wid.user;
-                sessionData.name = clientInfo.wid.pushname;
+                sessionData.name = clientInfo.pushname;
                 sessionData.status = 'ready'; // Mark as ready immediately
                 sessionData.connected_at = new Date();
                 sessionData.qr_code = null;
@@ -390,6 +390,7 @@ async function getSessionStatus(userId, placeId) {
             status: sessionData.status,
             qr_code: sessionData.qr_code,
             phone_number: sessionData.phone_number,
+            name: sessionData.name,
             connected_at: sessionData.connected_at,
             session_exists: true,
             total_contacts: sessionData.total_contacts || 0,
