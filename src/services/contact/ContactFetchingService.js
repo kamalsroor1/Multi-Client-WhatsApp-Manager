@@ -69,11 +69,8 @@ class ContactFetchingService {
                 this.logger.info(`Processed ${processedCount}/${totalContacts} contacts for session ${sessionId} (${newContactsAdded.length} new, ${updatedContacts.length} updated)`);
             }
 
-            // Get contacts from last 90 days for group updating
-            const contactsLast90Days = await this.getContactsLast90Days(userId, placeId);
-            
-            // Update groups with cumulative contact data (90-day filtered)
-            await this.updateGroupsWithCumulativeContacts(userId, placeId, sessionId, contactsLast90Days);
+            // Create/Update automatic groups: كل الأرقام & آخر الأرقام (90 يوم)
+            await this.createAutomaticGroups(userId, placeId, sessionId);
 
             // Get final statistics
             const finalStats = await this.getFinalStatistics(userId, placeId);
@@ -268,17 +265,38 @@ class ContactFetchingService {
     }
 
     /**
-     * Get contacts from last 90 days
+     * Create/Update automatic groups: كل الأرقام & آخر الأرقام (90 يوم)
      * @param {string} userId - User ID
      * @param {string} placeId - Place ID
-     * @returns {Array} - Contacts from last 90 days
+     * @param {string} sessionId - Session ID
      */
-    async getContactsLast90Days(userId, placeId) {
+    async createAutomaticGroups(userId, placeId, sessionId) {
         try {
+            this.logger.start(`Creating automatic groups for user ${userId}, place ${placeId}`);
+
             const ninetyDaysAgo = new Date();
             ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
-            const contacts = await this.Contact.find({
+            // 1. مجموعة "كل الأرقام" - جميع جهات الاتصال
+            const allContacts = await this.Contact.find({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active'
+            }).select('_id');
+
+            await this.createOrUpdateGroup({
+                userId,
+                placeId,
+                sessionId,
+                groupId: `all_contacts_${userId}_${placeId}`,
+                name: 'كل الأرقام',
+                description: 'جميع جهات الاتصال المحفوظة',
+                contactIds: allContacts.map(c => c._id),
+                groupType: 'auto'
+            });
+
+            // 2. مجموعة "آخر الأرقام (90 يوم)" - الجهات النشطة من آخر 90 يوم
+            const recentContacts = await this.Contact.find({
                 user_id: userId,
                 place_id: placeId,
                 status: 'active',
@@ -287,13 +305,70 @@ class ContactFetchingService {
                     { last_seen: { $gte: ninetyDaysAgo } },
                     { created_at: { $gte: ninetyDaysAgo } }
                 ]
+            }).select('_id');
+
+            await this.createOrUpdateGroup({
+                userId,
+                placeId,
+                sessionId,
+                groupId: `recent_contacts_${userId}_${placeId}`,
+                name: 'آخر الأرقام (90 يوم)',
+                description: 'جهات الاتصال النشطة من آخر 90 يوم',
+                contactIds: recentContacts.map(c => c._id),
+                groupType: 'auto'
             });
 
-            this.logger.info(`Found ${contacts.length} contacts from last 90 days for user ${userId}, place ${placeId}`);
-            return contacts;
+            this.logger.success(`Automatic groups created/updated: ${allContacts.length} total contacts, ${recentContacts.length} recent contacts`);
+
         } catch (error) {
-            this.logger.error('Error getting contacts from last 90 days:', error);
-            return [];
+            this.logger.error('Error creating automatic groups:', error);
+            // Don't throw error to avoid disrupting the sync process
+        }
+    }
+
+    /**
+     * Create or update a group
+     * @param {Object} groupData - Group data
+     */
+    async createOrUpdateGroup({ userId, placeId, sessionId, groupId, name, description, contactIds, groupType }) {
+        try {
+            // Check if group exists
+            const existingGroup = await this.ContactGroup.findOne({
+                group_id: groupId,
+                user_id: userId,
+                place_id: placeId
+            });
+
+            if (existingGroup) {
+                // Update existing group
+                existingGroup.contact_ids = contactIds;
+                existingGroup.updated_at = new Date();
+                existingGroup.is_active = true;
+                await existingGroup.save();
+                
+                this.logger.info(`Updated group "${name}" with ${contactIds.length} contacts`);
+            } else {
+                // Create new group
+                const newGroup = new this.ContactGroup({
+                    user_id: userId,
+                    place_id: placeId,
+                    session_id: sessionId,
+                    group_id: groupId,
+                    name: name,
+                    description: description,
+                    contact_ids: contactIds,
+                    group_type: groupType,
+                    is_active: true,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+
+                await newGroup.save();
+                this.logger.info(`Created group "${name}" with ${contactIds.length} contacts`);
+            }
+        } catch (error) {
+            this.logger.error(`Error creating/updating group "${name}":`, error);
+            // Don't throw to avoid disrupting sync process
         }
     }
 
@@ -335,65 +410,6 @@ class ContactFetchingService {
                 totalContacts: 0,
                 contactsLast90Days: 0
             };
-        }
-    }
-
-    /**
-     * Update groups with cumulative contact data (90-day filtered)
-     * @param {string} userId - User ID
-     * @param {string} placeId - Place ID
-     * @param {string} sessionId - Session ID
-     * @param {Array} contactsLast90Days - Contacts from last 90 days
-     */
-    async updateGroupsWithCumulativeContacts(userId, placeId, sessionId, contactsLast90Days) {
-        try {
-            this.logger.start(`Updating groups with cumulative contact data (90-day filtered) for session ${sessionId}`);
-            
-            // Check if default group exists
-            const defaultGroup = await this.ContactGroup.findOne({
-                user_id: userId,
-                place_id: placeId,
-                group_type: 'auto',
-                name: 'جميع الارقام'
-            });
-
-            if (!defaultGroup) {
-                // Create default group with all contacts from last 90 days
-                const contactIds = contactsLast90Days.map(contact => contact._id);
-                
-                const newDefaultGroup = new this.ContactGroup({
-                    user_id: userId,
-                    place_id: placeId,
-                    session_id: sessionId,
-                    group_id: `default_${userId}_${placeId}`,
-                    name: 'جميع الارقام',
-                    description: 'جميع جهات الاتصال ',
-                    contact_ids: contactIds,
-                    group_type: 'auto',
-                    filter_criteria: {
-                        last_interaction_days: 90
-                    },
-                    is_active: true,
-                    created_at: new Date(),
-                    updated_at: new Date()
-                });
-
-                await newDefaultGroup.save();
-                this.logger.info(`Created default group with ${contactIds.length} contacts from last 90 days`);
-            } else {
-                // Update existing default group with new contacts
-                const contactIds = contactsLast90Days.map(contact => contact._id);
-                
-                defaultGroup.contact_ids = contactIds;
-                defaultGroup.updated_at = new Date();
-                await defaultGroup.save();
-                
-                this.logger.info(`Updated default group with ${contactIds.length} contacts from last 90 days`);
-            }
-            
-            this.logger.success(`Groups updated with ${contactsLast90Days.length} contacts from last 90 days for session ${sessionId}`);
-        } catch (error) {
-            this.logger.error('Error updating groups with cumulative contacts:', error);
         }
     }
 
