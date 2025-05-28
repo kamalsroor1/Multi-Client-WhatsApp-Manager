@@ -92,6 +92,27 @@ class WhatsAppController {
     }
 
     /**
+     * Start background contact fetch manually
+     */
+    async startContactFetch(req, res) {
+        try {
+            const { user_id, place_id } = req.body;
+            
+            this.logger.info(`Starting manual contact fetch for user ${user_id}, place ${place_id}`);
+            
+            const result = await this.whatsAppService.startBackgroundContactFetch(
+                parseInt(user_id), 
+                parseInt(place_id)
+            );
+            
+            return ApiResponse.success(res, result, 'Background contact fetch started successfully');
+        } catch (error) {
+            this.logger.error('Error starting contact fetch:', error);
+            return ApiResponse.error(res, error.message, 500);
+        }
+    }
+
+    /**
      * Logout session
      */
     async logout(req, res) {
@@ -169,7 +190,7 @@ class WhatsAppController {
                     bulk_messaging: true,
                     group_management: true,
                     contact_search: true,
-                    background_contact_fetching: true,
+                    background_contact_fetching: 'ON DEMAND',
                     clean_architecture: true,
                     error_handling: true,
                     logging: true,
@@ -347,11 +368,11 @@ class WhatsAppController {
         }
 
         if (status.contacts_fetch_error) {
-            recommendations.push('Try restarting the session to re-fetch contacts');
+            recommendations.push('Use the contact fetch API to re-sync contacts');
         }
 
-        if (status.total_contacts === 0 && status.status === 'connected') {
-            recommendations.push('Wait for contact synchronization to complete');
+        if (status.total_contacts === 0 && status.status === 'ready') {
+            recommendations.push('Use the contact fetch API to start contact synchronization');
         }
 
         if (status.last_activity) {
