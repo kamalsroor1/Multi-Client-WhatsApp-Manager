@@ -1,5 +1,5 @@
 const { MessageMedia } = require('whatsapp-web.js');
-const MessageLog = require('../../models/MessageLog');
+const MessageLog = require('../../../models/MessageLog');
 const WhatsAppService = require('../whatsapp/WhatsAppService');
 const ContactService = require('../contact/ContactService');
 const GroupService = require('../contact/GroupService');

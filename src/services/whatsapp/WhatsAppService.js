@@ -1,4 +1,4 @@
-const WhatsAppSession = require('../../models/WhatsAppSession');
+const WhatsAppSession = require('../../../models/WhatsAppSession');
 const WhatsAppClientFactory = require('./WhatsAppClientFactory');
 const ContactFetchingService = require('../contact/ContactFetchingService');
 const Logger = require('../../utils/Logger');

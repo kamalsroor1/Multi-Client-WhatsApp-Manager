@@ -1,4 +1,4 @@
-const Contact = require('../../models/Contact');
+const Contact = require('../../../models/Contact');
 const GroupService = require('./GroupService');
 const Logger = require('../../utils/Logger');
 

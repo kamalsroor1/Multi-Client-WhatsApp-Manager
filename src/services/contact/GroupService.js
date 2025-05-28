@@ -1,4 +1,4 @@
-const ContactGroup = require('../../models/ContactGroup');
+const ContactGroup = require('../../../models/ContactGroup');
 const ContactService = require('./ContactService');
 const Logger = require('../../utils/Logger');
 
@@ -340,7 +340,7 @@ class GroupService {
      * Validate contact IDs belong to user
      */
     async validateContactIds(userId, placeId, contactIds) {
-        const Contact = require('../../models/Contact');
+        const Contact = require('../../../models/Contact');
         
         return await Contact.find({
             user_id: userId,
