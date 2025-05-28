@@ -709,22 +709,22 @@ app.post('/api/whatsapp/send-message', validateImageUrl, async (req, res) => {
  });
  
  // 404 handler
- app.use('*', (req, res) => {
-    res.status(404).json({ 
-        success: false, 
-        error: 'Endpoint not found',
-        available_endpoints: {
-            'POST /api/whatsapp/init': 'Initialize WhatsApp session',
-            'GET /api/whatsapp/status': 'Get session status',
-            'GET /api/whatsapp/groups': 'Get user groups',
-            'POST /api/whatsapp/send-message': 'Send message to contact',
-            'POST /api/whatsapp/groups/:group_id/send-message': 'Send message to group',
-            'POST /api/whatsapp/send-bulk-messages': 'Send bulk messages',
-            'POST /api/whatsapp/test-image-url': 'Test image URL validity',
-            'GET /api/health': 'Health check'
-        }
-    });
- });
+//  app.use('*', (req, res) => {
+//     res.status(404).json({ 
+//         success: false, 
+//         error: 'Endpoint not found',
+//         available_endpoints: {
+//             'POST /api/whatsapp/init': 'Initialize WhatsApp session',
+//             'GET /api/whatsapp/status': 'Get session status',
+//             'GET /api/whatsapp/groups': 'Get user groups',
+//             'POST /api/whatsapp/send-message': 'Send message to contact',
+//             'POST /api/whatsapp/groups/:group_id/send-message': 'Send message to group',
+//             'POST /api/whatsapp/send-bulk-messages': 'Send bulk messages',
+//             'POST /api/whatsapp/test-image-url': 'Test image URL validity',
+//             'GET /api/health': 'Health check'
+//         }
+//     });
+//  });
  
  app.listen(PORT, () => {
     console.log(`🚀 WhatsApp Integration Service running on port ${PORT}`);

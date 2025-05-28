@@ -16,7 +16,7 @@ const whatsappSessionSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['initializing', 'qr_ready', 'authenticated', 'connected', 'disconnected', 'error'],
+        enum: ['initializing', 'qr_ready', 'authenticated','loading_screen', 'connected', 'disconnected', 'error'],
         default: 'initializing'
     },
     qr_code: {
@@ -24,6 +24,10 @@ const whatsappSessionSchema = new mongoose.Schema({
         default: null
     },
     phone_number: {
+        type: String,
+        default: null
+    },
+    name: {
         type: String,
         default: null
     },

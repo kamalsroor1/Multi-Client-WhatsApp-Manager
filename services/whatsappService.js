@@ -138,12 +138,35 @@ async function initClient(userId, placeId) {
             }
         });
 
+
+        // client.on('ready', () => {
+        //     console.log(`✅ Session ${sessionId} is ready`);
+        // });
+
+
+
+        client.on('loading_screen', async () => {
+            try {
+                sessionData.status = 'loading_screen';
+                sessionData.qr_code = null;
+                sessionData.updated_at = new Date();
+                await sessionData.save();
+                
+                console.log(`✅ Session ${sessionId} loading_screen`);
+            } catch (error) {
+                console.error(`Error updating auth status for ${sessionId}:`, error);
+            }
+        });
+
         client.on('ready', async () => {
             try {
                 // Get phone number
+                console.log('client.info',client.info);
+                
                 const clientInfo = client.info;
                 sessionData.phone_number = clientInfo.wid.user;
-                sessionData.status = 'connected';
+                sessionData.name = clientInfo.wid.pushname;
+                sessionData.status = 'ready';
                 sessionData.connected_at = new Date();
                 sessionData.qr_code = null;
                 sessionData.updated_at = new Date();
