@@ -43,7 +43,7 @@ class GroupService {
                 place_id: placeId,
                 session_id: sessionId,
                 group_id: this.generateGroupId(userId, placeId, 'all'),
-                name: 'All Contacts',
+                name: 'جميع الارقام',
                 description: 'All WhatsApp contacts',
                 contact_ids: contacts.map(c => c._id),
                 group_type: 'auto',
@@ -61,7 +61,7 @@ class GroupService {
                     place_id: placeId,
                     session_id: sessionId,
                     group_id: this.generateGroupId(userId, placeId, 'recent'),
-                    name: 'Recent Contacts (90 days)',
+                    name: 'اخر الارقام (90 يوم)',
                     description: 'Contacts with activity in the last 90 days',
                     contact_ids: recentContacts.map(c => c._id),
                     group_type: 'auto',
@@ -71,45 +71,45 @@ class GroupService {
                 });
             }
             
-            // Business Contacts group
-            const businessContacts = contacts.filter(contact => contact.is_business);
+            // // Business Contacts group
+            // const businessContacts = contacts.filter(contact => contact.is_business);
             
-            if (businessContacts.length > 0) {
-                groupsToCreate.push({
-                    user_id: userId,
-                    place_id: placeId,
-                    session_id: sessionId,
-                    group_id: this.generateGroupId(userId, placeId, 'business'),
-                    name: 'Business Contacts',
-                    description: 'WhatsApp Business accounts',
-                    contact_ids: businessContacts.map(c => c._id),
-                    group_type: 'auto',
-                    filter_criteria: {
-                        is_business: true
-                    }
-                });
-            }
+            // if (businessContacts.length > 0) {
+            //     groupsToCreate.push({
+            //         user_id: userId,
+            //         place_id: placeId,
+            //         session_id: sessionId,
+            //         group_id: this.generateGroupId(userId, placeId, 'business'),
+            //         name: 'Business Contacts',
+            //         description: 'WhatsApp Business accounts',
+            //         contact_ids: businessContacts.map(c => c._id),
+            //         group_type: 'auto',
+            //         filter_criteria: {
+            //             is_business: true
+            //         }
+            //     });
+            // }
             
-            // Contacts with Profile Picture group
-            const contactsWithPicture = contacts.filter(contact => 
-                contact.profile_picture_url && contact.profile_picture_url.trim() !== ''
-            );
+            // // Contacts with Profile Picture group
+            // const contactsWithPicture = contacts.filter(contact => 
+            //     contact.profile_picture_url && contact.profile_picture_url.trim() !== ''
+            // );
             
-            if (contactsWithPicture.length > 0) {
-                groupsToCreate.push({
-                    user_id: userId,
-                    place_id: placeId,
-                    session_id: sessionId,
-                    group_id: this.generateGroupId(userId, placeId, 'with_picture'),
-                    name: 'Contacts with Profile Picture',
-                    description: 'Contacts that have profile pictures',
-                    contact_ids: contactsWithPicture.map(c => c._id),
-                    group_type: 'auto',
-                    filter_criteria: {
-                        has_profile_picture: true
-                    }
-                });
-            }
+            // if (contactsWithPicture.length > 0) {
+            //     groupsToCreate.push({
+            //         user_id: userId,
+            //         place_id: placeId,
+            //         session_id: sessionId,
+            //         group_id: this.generateGroupId(userId, placeId, 'with_picture'),
+            //         name: 'Contacts with Profile Picture',
+            //         description: 'Contacts that have profile pictures',
+            //         contact_ids: contactsWithPicture.map(c => c._id),
+            //         group_type: 'auto',
+            //         filter_criteria: {
+            //             has_profile_picture: true
+            //         }
+            //     });
+            // }
             
             // Create all groups
             const createdGroups = await ContactGroup.insertMany(groupsToCreate);
