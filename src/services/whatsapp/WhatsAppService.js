@@ -340,28 +340,42 @@ class WhatsAppService {
     }
 
     /**
-     * Get client by session credentials
+     * Get client by session credentials - Enhanced with better validation
      */
     async getClientByCredentials(userId, placeId) {
         const sessionData = await WhatsAppSession.findOne({ 
             user_id: userId, 
-            place_id: placeId,
-            status: { $in: ['ready', 'connected', 'fetching_contacts'] }
-        });
+            place_id: placeId
+        }).sort({ created_at: -1 });
 
         if (!sessionData) {
-            throw new Error('No active session found');
+            throw new Error('No session found for this user and place');
+        }
+
+        // Check if session is in a ready state
+        if (!['ready', 'connected', 'fetching_contacts'].includes(sessionData.status)) {
+            throw new Error(`Session is not ready. Current status: ${sessionData.status}`);
         }
 
         const client = this.clientFactory.getClient(sessionData.session_id);
         if (!client) {
-            throw new Error('Client not available');
+            // Client not found in memory, update session status
+            this.logger.warn(`Client not found in memory for session ${sessionData.session_id}, updating status`);
+            await WhatsAppSession.findOneAndUpdate(
+                { session_id: sessionData.session_id },
+                { 
+                    status: 'disconnected',
+                    updated_at: new Date()
+                }
+            );
+            throw new Error('Client not available - session may have been disconnected');
         }
 
         // Check if client is actually ready
         const isReady = await this.clientFactory.isClientReady(sessionData.session_id);
         if (!isReady) {
-            throw new Error('Client is not ready');
+            this.logger.warn(`Client exists but not ready for session ${sessionData.session_id}`);
+            throw new Error('Client is not ready - try again in a moment');
         }
 
         return { client, sessionData };
@@ -550,12 +564,31 @@ class WhatsAppService {
 
     /**
      * Start background contact fetching - now exposed as API endpoint
+     * Enhanced with better error handling and validation
      */
     async startBackgroundContactFetch(userId, placeId) {
         try {
-            const { client, sessionData } = await this.getClientByCredentials(userId, placeId);
+            this.logger.start(`Starting background contact fetch for user ${userId}, place ${placeId}`);
+
+            // Get session data first to check status
+            const sessionData = await WhatsAppSession.findOne({ 
+                user_id: userId, 
+                place_id: placeId
+            }).sort({ created_at: -1 });
+
+            if (!sessionData) {
+                throw new Error('No session found for this user and place');
+            }
+
+            // Check session status
+            if (!['ready', 'connected'].includes(sessionData.status)) {
+                throw new Error(`Cannot start contact fetch. Session status: ${sessionData.status}. Please ensure session is ready.`);
+            }
+
+            // Get client with enhanced validation
+            const { client } = await this.getClientByCredentials(userId, placeId);
             
-            this.logger.start(`Starting background contact fetch for session: ${sessionData.session_id}`);
+            this.logger.info(`Contact fetch starting for session: ${sessionData.session_id}`);
 
             // Create progress update callback
             const onProgressUpdate = async (progress) => {
@@ -591,7 +624,7 @@ class WhatsAppService {
                 this.logger.error(`Background contact fetch failed for ${sessionData.session_id}:`, error);
                 // Update error status
                 onProgressUpdate({
-                    status: 'error',
+                    status: 'ready', // Reset to ready status
                     error: error.message,
                     completed: false
                 });
@@ -600,7 +633,8 @@ class WhatsAppService {
             return {
                 success: true,
                 message: 'Background contact fetch started',
-                session_id: sessionData.session_id
+                session_id: sessionData.session_id,
+                current_status: sessionData.status
             };
 
         } catch (error) {
