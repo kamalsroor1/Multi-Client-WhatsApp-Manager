@@ -81,26 +81,46 @@ class ContactController {
     }
 
     /**
-     * Get contacts by group ID
+     * Get contacts by group ID with search functionality
      */
     async getContactsByGroup(req, res) {
         try {
-            const { user_id, place_id, page = 1, limit = 50 } = req.query;
+            const { 
+                user_id, 
+                place_id, 
+                page = 1, 
+                limit = 50,
+                search,           // البحث بالاسم أو الرقم
+                search_type = 'all' // نوع البحث: 'name', 'phone', 'all'
+            } = req.query;
             const { group_id } = req.params;
 
-            this.logger.info(`Getting contacts for group ${group_id}`);
+            this.logger.info(`Getting contacts for group ${group_id}${search ? ` with search: "${search}"` : ''}`);
+
+            // إعداد خيارات البحث
+            const searchOptions = {
+                page: parseInt(page),
+                limit: parseInt(limit)
+            };
+
+            // إضافة البحث إذا كان موجود
+            if (search && search.trim()) {
+                searchOptions.search = search.trim();
+                searchOptions.search_type = search_type;
+            }
 
             const groupData = await this.groupService.getContactsByGroupId(
                 parseInt(user_id), 
                 parseInt(place_id),
                 group_id,
-                {
-                    page: parseInt(page),
-                    limit: parseInt(limit)
-                }
+                searchOptions
             );
 
-            return ApiResponse.success(res, groupData, `Found ${groupData.contacts.length} contacts in group`);
+            const message = search 
+                ? `Found ${groupData.contacts.length} contacts matching "${search}" in group`
+                : `Found ${groupData.contacts.length} contacts in group`;
+
+            return ApiResponse.success(res, groupData, message);
         } catch (error) {
             this.logger.error('Error getting group contacts:', error);
             return ApiResponse.error(res, error.message, 500);
