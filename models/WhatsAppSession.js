@@ -9,10 +9,16 @@ const whatsappSessionSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
-    session_id: {
+    session_name: {
         type: String,
         required: true,
-        unique: true
+        default: function() {
+            return `WhatsApp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        }
+    },
+    session_id: {
+        type: String,
+        required: true
     },
     status: {
         type: String,
@@ -79,5 +85,13 @@ const whatsappSessionSchema = new mongoose.Schema({
 // Index for faster queries
 whatsappSessionSchema.index({ user_id: 1, place_id: 1 });
 whatsappSessionSchema.index({ session_id: 1 });
+// Compound unique index to allow multiple sessions per user but unique session names per user
+whatsappSessionSchema.index({ user_id: 1, session_name: 1 }, { unique: true });
+
+// Middleware to update the updated_at field
+whatsappSessionSchema.pre('save', function(next) {
+    this.updated_at = Date.now();
+    next();
+});
 
 module.exports = mongoose.model('WhatsAppSession', whatsappSessionSchema);
