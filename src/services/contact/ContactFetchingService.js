@@ -122,10 +122,24 @@ class ContactFetchingService {
         }
 
         return contacts.filter(contact => {
+
+            
             // Skip contacts without proper ID
             if (!contact.id || !contact.id._serialized) {
                 return false;
             }
+
+
+            if (contact.id?.server != 'c.us') {
+                return false;
+            }
+
+
+            if (!contact.isWAContact) {
+                return false;
+            }
+
+
 
             // Skip broadcast lists and status updates
             if (contact.id._serialized.includes('@broadcast') || 
