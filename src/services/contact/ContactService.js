@@ -1,5 +1,4 @@
 const Contact = require('../../../models/Contact');
-const GroupService = require('./GroupService');
 const Logger = require('../../utils/Logger');
 
 /**
@@ -8,8 +7,19 @@ const Logger = require('../../utils/Logger');
  */
 class ContactService {
     constructor() {
-        this.groupService = new GroupService();
         this.logger = new Logger('ContactService');
+        this._groupService = null; // Lazy loading to avoid circular dependency
+    }
+
+    /**
+     * Get GroupService instance with lazy loading
+     */
+    get groupService() {
+        if (!this._groupService) {
+            const GroupService = require('./GroupService');
+            this._groupService = new GroupService();
+        }
+        return this._groupService;
     }
 
     /**
