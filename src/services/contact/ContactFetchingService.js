@@ -2,27 +2,29 @@ const Logger = require('../../utils/Logger');
 const ContactService = require('../contact/ContactService');
 
 /**
- * Service for managing background contact fetching with cumulative sync
+ * Service for managing background contact fetching with cumulative sync and 90-day filtering
  * Implements Single Responsibility Principle
  */
 class ContactFetchingService {
     constructor() {
         this.logger = new Logger('ContactFetchingService');
         this.contactService = new ContactService();
+        this.Contact = require('../../../models/Contact');
     }
 
     /**
-     * Fetch contacts in background with progress tracking and cumulative sync
+     * Fetch contacts in background with progress tracking, cumulative sync, and 90-day filtering
      */
     async fetchContactsInBackground(client, userId, placeId, sessionId, onProgressUpdate) {
         try {
-            this.logger.start(`Background contact fetch with cumulative sync for session ${sessionId}`);
+            this.logger.start(`Background contact fetch with cumulative sync and 90-day filtering for session ${sessionId}`);
             
             // Notify start of fetching
             if (onProgressUpdate) {
                 await onProgressUpdate({
                     status: 'fetching_contacts',
-                    progress: 0
+                    progress: 0,
+                    message: 'بدء جلب جهات الاتصال من واتساب...'
                 });
             }
 
@@ -30,7 +32,7 @@ class ContactFetchingService {
             const contacts = await client.getContacts();
             const validContacts = this.filterValidContacts(contacts);
             
-            this.logger.info(`Found ${validContacts.length} valid contacts for cumulative sync in session ${sessionId}`);
+            this.logger.info(`Found ${validContacts.length} valid contacts for processing in session ${sessionId}`);
 
             // Process contacts in batches for better performance
             const batchSize = 50;
@@ -58,18 +60,22 @@ class ContactFetchingService {
                         processed: processedCount,
                         total: totalContacts,
                         newContacts: newContactsAdded.length,
-                        updatedContacts: updatedContacts.length
+                        updatedContacts: updatedContacts.length,
+                        message: `معالجة ${processedCount}/${totalContacts} جهة اتصال...`
                     });
                 }
 
                 this.logger.info(`Processed ${processedCount}/${totalContacts} contacts for session ${sessionId} (${newContactsAdded.length} new, ${updatedContacts.length} updated)`);
             }
 
-            // Get all contacts for group updating
-            const allContacts = await this.getAllUserContacts(userId, placeId);
+            // Get contacts from last 90 days for group updating
+            const contactsLast90Days = await this.getContactsLast90Days(userId, placeId);
             
-            // Update groups with cumulative contact data
-            await this.updateGroupsWithCumulativeContacts(userId, placeId, sessionId, allContacts);
+            // Update groups with cumulative contact data (90-day filtered)
+            await this.updateGroupsWithCumulativeContacts(userId, placeId, sessionId, contactsLast90Days);
+
+            // Get final statistics
+            const finalStats = await this.getFinalStatistics(userId, placeId);
 
             // Notify completion with cumulative stats
             if (onProgressUpdate) {
@@ -80,20 +86,24 @@ class ContactFetchingService {
                     total: totalContacts,
                     newContacts: newContactsAdded.length,
                     updatedContacts: updatedContacts.length,
-                    totalContacts: allContacts.length,
-                    completed: true
+                    totalContacts: finalStats.totalContacts,
+                    contactsLast90Days: finalStats.contactsLast90Days,
+                    completed: true,
+                    message: `تم إكمال المزامنة بنجاح! ${finalStats.contactsLast90Days} جهة اتصال من آخر 90 يوم`
                 });
             }
 
-            this.logger.success(`Cumulative contact sync completed for session ${sessionId}. ${newContactsAdded.length} new contacts added, ${updatedContacts.length} contacts updated. Total contacts: ${allContacts.length}`);
+            this.logger.success(`Cumulative contact sync completed for session ${sessionId}. ${newContactsAdded.length} new contacts added, ${updatedContacts.length} contacts updated. Total contacts last 90 days: ${finalStats.contactsLast90Days}`);
             
             return {
                 success: true,
                 processedCount,
-                totalContacts: allContacts.length,
+                totalContacts: finalStats.totalContacts,
+                contactsLast90Days: finalStats.contactsLast90Days,
                 newContacts: newContactsAdded.length,
                 updatedContacts: updatedContacts.length,
-                cumulativeSync: true
+                cumulativeSync: true,
+                dateFilter: '90_days'
             };
 
         } catch (error) {
@@ -103,7 +113,8 @@ class ContactFetchingService {
             if (onProgressUpdate) {
                 await onProgressUpdate({
                     status: 'error',
-                    error: error.message
+                    error: error.message,
+                    message: `خطأ في المزامنة: ${error.message}`
                 });
             }
             
@@ -112,7 +123,7 @@ class ContactFetchingService {
     }
 
     /**
-     * Filter valid contacts from WhatsApp contacts list
+     * Filter valid contacts from WhatsApp contacts list with enhanced validation
      * @param {Array} contacts - Raw contacts from WhatsApp
      * @returns {Array} - Filtered valid contacts
      */
@@ -121,25 +132,21 @@ class ContactFetchingService {
             return [];
         }
 
-        return contacts.filter(contact => {
-
-            
+        const validContacts = contacts.filter(contact => {
             // Skip contacts without proper ID
             if (!contact.id || !contact.id._serialized) {
                 return false;
             }
 
-
+            // Only process regular contacts (c.us server)
             if (contact.id?.server != 'c.us') {
                 return false;
             }
 
-
+            // Must be a WhatsApp contact
             if (!contact.isWAContact) {
                 return false;
             }
-
-
 
             // Skip broadcast lists and status updates
             if (contact.id._serialized.includes('@broadcast') || 
@@ -157,8 +164,16 @@ class ContactFetchingService {
                 return false;
             }
 
+            // Skip group contacts
+            if (contact.isGroup) {
+                return false;
+            }
+
             return true;
         });
+
+        this.logger.info(`Filtered ${validContacts.length} valid contacts from ${contacts.length} total contacts`);
+        return validContacts;
     }
 
     /**
@@ -203,18 +218,20 @@ class ContactFetchingService {
             const contactData = {
                 whatsapp_id: contact.id._serialized,
                 name: contact.name || contact.pushname || 'Unknown',
+                formatted_name: contact.formattedName || contact.name || contact.pushname || 'Unknown',
                 number: contact.number,
+                phone_number: `+${contact.number}`,
                 is_business: contact.isBusiness || false,
                 profile_picture_url: null, // Will be fetched separately if needed
                 last_seen: contact.lastSeen || null,
                 is_group: contact.isGroup || false,
-                last_interaction: new Date() // Mark this sync as interaction
+                last_interaction: new Date(), // Mark this sync as interaction
+                status: 'active'
             };
 
             // Check if contact exists
-            const Contact = require('../../../models/Contact');
             const contactId = this.contactService.generateContactId(userId, placeId, contact.id._serialized);
-            const existingContact = await Contact.findOne({ contact_id: contactId });
+            const existingContact = await this.Contact.findOne({ contact_id: contactId });
 
             // Save contact using ContactService (will update if exists, create if new)
             const savedContact = await this.contactService.saveOrUpdateContact(userId, placeId, sessionId, contactData);
@@ -231,46 +248,95 @@ class ContactFetchingService {
     }
 
     /**
-     * Get all user contacts for group updating
+     * Get contacts from last 90 days
      * @param {string} userId - User ID
      * @param {string} placeId - Place ID
-     * @returns {Array} - All user contacts
+     * @returns {Array} - Contacts from last 90 days
      */
-    async getAllUserContacts(userId, placeId) {
+    async getContactsLast90Days(userId, placeId) {
         try {
-            const Contact = require('../../../models/Contact');
-            const contacts = await Contact.find({
+            const ninetyDaysAgo = new Date();
+            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+            const contacts = await this.Contact.find({
                 user_id: userId,
                 place_id: placeId,
-                status: 'active'
+                status: 'active',
+                $or: [
+                    { last_interaction: { $gte: ninetyDaysAgo } },
+                    { last_seen: { $gte: ninetyDaysAgo } },
+                    { created_at: { $gte: ninetyDaysAgo } }
+                ]
             });
 
+            this.logger.info(`Found ${contacts.length} contacts from last 90 days for user ${userId}, place ${placeId}`);
             return contacts;
         } catch (error) {
-            this.logger.error('Error getting all user contacts:', error);
+            this.logger.error('Error getting contacts from last 90 days:', error);
             return [];
         }
     }
 
     /**
-     * Update groups with cumulative contact data
+     * Get final statistics for user
+     * @param {string} userId - User ID
+     * @param {string} placeId - Place ID
+     * @returns {Object} - Final statistics
+     */
+    async getFinalStatistics(userId, placeId) {
+        try {
+            const ninetyDaysAgo = new Date();
+            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+            const totalContacts = await this.Contact.countDocuments({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active'
+            });
+
+            const contactsLast90Days = await this.Contact.countDocuments({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active',
+                $or: [
+                    { last_interaction: { $gte: ninetyDaysAgo } },
+                    { last_seen: { $gte: ninetyDaysAgo } },
+                    { created_at: { $gte: ninetyDaysAgo } }
+                ]
+            });
+
+            return {
+                totalContacts,
+                contactsLast90Days
+            };
+        } catch (error) {
+            this.logger.error('Error getting final statistics:', error);
+            return {
+                totalContacts: 0,
+                contactsLast90Days: 0
+            };
+        }
+    }
+
+    /**
+     * Update groups with cumulative contact data (90-day filtered)
      * @param {string} userId - User ID
      * @param {string} placeId - Place ID
      * @param {string} sessionId - Session ID
-     * @param {Array} allContacts - All user contacts
+     * @param {Array} contactsLast90Days - Contacts from last 90 days
      */
-    async updateGroupsWithCumulativeContacts(userId, placeId, sessionId, allContacts) {
+    async updateGroupsWithCumulativeContacts(userId, placeId, sessionId, contactsLast90Days) {
         try {
-            this.logger.start(`Updating groups with cumulative contact data for session ${sessionId}`);
+            this.logger.start(`Updating groups with cumulative contact data (90-day filtered) for session ${sessionId}`);
             
             // Get GroupService
             const GroupService = require('./GroupService');
             const groupService = new GroupService();
             
-            // Update groups with all contacts (cumulative)
-            await groupService.createDefaultGroups(userId, placeId, sessionId, allContacts);
+            // Create default groups if they don't exist
+            await groupService.createDefaultGroups(userId, placeId, sessionId);
             
-            this.logger.success(`Groups updated with ${allContacts.length} cumulative contacts for session ${sessionId}`);
+            this.logger.success(`Groups updated with ${contactsLast90Days.length} contacts from last 90 days for session ${sessionId}`);
         } catch (error) {
             this.logger.error('Error updating groups with cumulative contacts:', error);
         }
@@ -316,30 +382,49 @@ class ContactFetchingService {
     }
 
     /**
-     * Get sync statistics for user
+     * Get sync statistics for user with 90-day filtering
      * @param {string} userId - User ID
      * @param {string} placeId - Place ID
      * @returns {Object} - Sync statistics
      */
     async getSyncStatistics(userId, placeId) {
         try {
-            const Contact = require('../../../models/Contact');
+            const ninetyDaysAgo = new Date();
+            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
             
-            const stats = await Contact.aggregate([
-                { $match: { user_id: userId, place_id: placeId, status: 'active' } },
+            const stats = await this.Contact.aggregate([
+                { 
+                    $match: { 
+                        user_id: userId, 
+                        place_id: placeId, 
+                        status: 'active' 
+                    } 
+                },
                 {
                     $group: {
                         _id: null,
                         total_contacts: { $sum: 1 },
-                        contacts_with_recent_sync: {
+                        contacts_last_90_days: {
                             $sum: {
                                 $cond: [
                                     {
-                                        $gte: [
-                                            '$last_interaction',
-                                            new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
+                                        $or: [
+                                            { $gte: ['$last_interaction', ninetyDaysAgo] },
+                                            { $gte: ['$last_seen', ninetyDaysAgo] },
+                                            { $gte: ['$created_at', ninetyDaysAgo] }
                                         ]
                                     },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        contacts_with_recent_sync: {
+                            $sum: {
+                                $cond: [
+                                    { $gte: ['$last_interaction', twentyFourHoursAgo] },
                                     1,
                                     0
                                 ]
@@ -351,13 +436,21 @@ class ContactFetchingService {
 
             const result = stats[0] || {
                 total_contacts: 0,
+                contacts_last_90_days: 0,
                 contacts_with_recent_sync: 0
             };
 
             return {
                 ...result,
                 sync_coverage_percentage: result.total_contacts > 0 ? 
-                    Math.round((result.contacts_with_recent_sync / result.total_contacts) * 100) : 0
+                    Math.round((result.contacts_with_recent_sync / result.total_contacts) * 100) : 0,
+                last_90_days_percentage: result.total_contacts > 0 ? 
+                    Math.round((result.contacts_last_90_days / result.total_contacts) * 100) : 0,
+                date_filter: {
+                    type: 'last_90_days',
+                    from_date: ninetyDaysAgo.toISOString(),
+                    to_date: new Date().toISOString()
+                }
             };
 
         } catch (error) {
