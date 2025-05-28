@@ -1,6 +1,7 @@
 const WhatsAppSession = require('../../../models/WhatsAppSession');
 const WhatsAppClientFactory = require('./WhatsAppClientFactory');
 const ContactFetchingService = require('../contact/ContactFetchingService');
+const GroupService = require('../contact/GroupService');
 const Logger = require('../../utils/Logger');
 
 /**
@@ -11,6 +12,7 @@ class WhatsAppService {
     constructor() {
         this.clientFactory = new WhatsAppClientFactory();
         this.contactFetchingService = new ContactFetchingService();
+        this.groupService = new GroupService();
         this.logger = new Logger('WhatsAppService');
     }
 
@@ -473,8 +475,8 @@ class WhatsAppService {
                     
                     this.logger.success(`Session ready: ${sessionData.session_id}`);
                     
-                    // Start background contact fetching
-                    this.startBackgroundContactFetch(sessionData);
+                    // Create default groups instead of starting background contact fetch
+                    await this.createDefaultGroupsAfterReady(sessionData);
                 } catch (error) {
                     this.logger.error(`Error updating ready status for ${sessionData.session_id}:`, error);
                 }
@@ -515,16 +517,45 @@ class WhatsAppService {
     }
 
     /**
-     * Start background contact fetching
+     * Create default groups after session is ready
+     * This replaces the automatic contact fetching
      */
-    async startBackgroundContactFetch(sessionData) {
+    async createDefaultGroupsAfterReady(sessionData) {
         try {
-            const client = this.clientFactory.getClient(sessionData.session_id);
-            if (!client) {
-                throw new Error('Client not available for contact fetch');
-            }
+            this.logger.start(`Creating default groups for session: ${sessionData.session_id}`);
+            
+            // Create empty default groups
+            const defaultGroups = await this.groupService.createDefaultGroups(
+                sessionData.user_id,
+                sessionData.place_id,
+                sessionData.session_id,
+                [] // Empty contacts array initially
+            );
+            
+            // Update session with group count
+            await WhatsAppSession.findOneAndUpdate(
+                { session_id: sessionData.session_id },
+                { 
+                    total_groups: defaultGroups.length,
+                    updated_at: new Date()
+                }
+            );
+            
+            this.logger.success(`Created ${defaultGroups.length} default groups for session: ${sessionData.session_id}`);
+            
+        } catch (error) {
+            this.logger.error(`Error creating default groups for ${sessionData.session_id}:`, error);
+        }
+    }
 
-            this.logger.start(`Background contact fetch for session: ${sessionData.session_id}`);
+    /**
+     * Start background contact fetching - now exposed as API endpoint
+     */
+    async startBackgroundContactFetch(userId, placeId) {
+        try {
+            const { client, sessionData } = await this.getClientByCredentials(userId, placeId);
+            
+            this.logger.start(`Starting background contact fetch for session: ${sessionData.session_id}`);
 
             // Create progress update callback
             const onProgressUpdate = async (progress) => {
@@ -566,8 +597,15 @@ class WhatsAppService {
                 });
             });
 
+            return {
+                success: true,
+                message: 'Background contact fetch started',
+                session_id: sessionData.session_id
+            };
+
         } catch (error) {
             this.logger.error(`Error starting background contact fetch:`, error);
+            throw new Error(`Failed to start contact fetch: ${error.message}`);
         }
     }
 
