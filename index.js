@@ -118,9 +118,12 @@ app.get('/api/whatsapp/groups',
     )
 );
 
+// Updated route with search validation
 app.get('/api/whatsapp/groups/:group_id/contacts',
     validationMiddleware.validateUserPlace,
     validationMiddleware.validateGroupId,
+    validationMiddleware.validateGroupSearch,    // إضافة validation البحث الجديد
+    validationMiddleware.validatePagination,
     errorMiddleware.asyncHandler(
         contactController.getContactsByGroup.bind(contactController)
     )
@@ -259,7 +262,7 @@ app.use(errorMiddleware.handleError);
 
 // Start server
 const server = app.listen(PORT, () => {
-    logger.success(`🚀 WhatsApp Integration Service v2.0.0 running on port ${PORT}`);
+    logger.success(`🚀 WhatsApp Integration Service v2.1.0 running on port ${PORT}`);
     logger.info(`📊 Health check: http://localhost:${PORT}/api/health`);
     logger.info(`🖼️  Image support: URL-based downloading`);
     logger.info(`📱 Ready for Laravel integration`);
@@ -268,6 +271,7 @@ const server = app.listen(PORT, () => {
     logger.info(`🛡️  Error Handling: CENTRALIZED`);
     logger.info(`📝 Logging: STRUCTURED`);
     logger.info(`✅ Validation: COMPREHENSIVE`);
+    logger.info(`🔍 Search: ENABLED with name/phone filtering`);
 });
 
 // Graceful shutdown handlers
