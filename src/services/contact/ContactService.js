@@ -2,7 +2,7 @@ const Contact = require('../../../models/Contact');
 const Logger = require('../../utils/Logger');
 
 /**
- * Service for managing contacts
+ * Service for managing contacts with cumulative sync
  * Implements Single Responsibility Principle
  */
 class ContactService {
@@ -30,11 +30,11 @@ class ContactService {
     }
 
     /**
-     * Save or update contacts from WhatsApp
+     * Save or update contacts from WhatsApp with cumulative sync
      */
     async saveContacts(userId, placeId, sessionId, contactsData) {
         try {
-            this.logger.start(`Saving ${contactsData.length} contacts for user ${userId}`);
+            this.logger.start(`Saving ${contactsData.length} contacts for user ${userId} with cumulative sync`);
             
             const savedContacts = [];
             const batchSize = 50; // Process contacts in batches
@@ -47,10 +47,13 @@ class ContactService {
                 this.logger.progress('Saving contacts', i + batch.length, contactsData.length);
             }
             
-            // Create default groups after saving contacts
-            await this.groupService.createDefaultGroups(userId, placeId, sessionId, savedContacts);
+            // Get all user contacts for group updating
+            const allContacts = await this.getAllUserContacts(userId, placeId);
             
-            this.logger.success(`Successfully saved ${savedContacts.length} contacts and created default groups`);
+            // Create default groups with cumulative contacts
+            await this.groupService.createDefaultGroups(userId, placeId, sessionId, allContacts);
+            
+            this.logger.success(`Successfully saved ${savedContacts.length} contacts and updated groups with ${allContacts.length} cumulative contacts`);
             
             return savedContacts;
             
@@ -80,7 +83,7 @@ class ContactService {
     }
 
     /**
-     * Save or update single contact
+     * Save or update single contact - exposed method for cumulative sync
      */
     async saveOrUpdateContact(userId, placeId, sessionId, contactData) {
         const contactId = this.generateContactId(userId, placeId, contactData.whatsapp_id);
@@ -90,24 +93,45 @@ class ContactService {
         if (contact) {
             // Update existing contact
             contact = await this.updateExistingContact(contact, contactData);
+            this.logger.debug(`Updated existing contact: ${contactData.number}`);
         } else {
             // Create new contact
             contact = await this.createNewContact(userId, placeId, sessionId, contactId, contactData);
+            this.logger.debug(`Created new contact: ${contactData.number}`);
         }
         
         return contact;
     }
 
     /**
-     * Update existing contact
+     * Update existing contact with new data
      */
     async updateExistingContact(contact, contactData) {
-        contact.name = contactData.name;
-        contact.last_interaction = contactData.last_interaction;
-        contact.last_seen = contactData.last_seen;
-        contact.is_business = contactData.is_business || false;
-        contact.profile_picture_url = contactData.profile_picture_url;
-        contact.business_info = contactData.business_info || {};
+        // Only update fields that have new data
+        if (contactData.name && contactData.name !== 'Unknown') {
+            contact.name = contactData.name;
+        }
+        
+        if (contactData.last_interaction) {
+            contact.last_interaction = contactData.last_interaction;
+        }
+        
+        if (contactData.last_seen) {
+            contact.last_seen = contactData.last_seen;
+        }
+        
+        if (contactData.is_business !== undefined) {
+            contact.is_business = contactData.is_business;
+        }
+        
+        if (contactData.profile_picture_url) {
+            contact.profile_picture_url = contactData.profile_picture_url;
+        }
+        
+        if (contactData.business_info) {
+            contact.business_info = { ...contact.business_info, ...contactData.business_info };
+        }
+        
         contact.updated_at = new Date();
         
         await contact.save();
@@ -136,6 +160,24 @@ class ContactService {
         
         await contact.save();
         return contact;
+    }
+
+    /**
+     * Get all user contacts for cumulative operations
+     */
+    async getAllUserContacts(userId, placeId) {
+        try {
+            const contacts = await Contact.find({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active'
+            });
+
+            return contacts;
+        } catch (error) {
+            this.logger.error('Error getting all user contacts:', error);
+            return [];
+        }
     }
 
     /**
@@ -295,7 +337,7 @@ class ContactService {
     }
 
     /**
-     * Get contact statistics
+     * Get contact statistics with cumulative data
      */
     async getContactStatistics(userId, placeId) {
         try {
@@ -324,6 +366,20 @@ class ContactService {
                                     0
                                 ]
                             }
+                        },
+                        contacts_synced_today: {
+                            $sum: {
+                                $cond: [
+                                    {
+                                        $gte: [
+                                            '$updated_at',
+                                            new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
+                                        ]
+                                    },
+                                    1,
+                                    0
+                                ]
+                            }
                         }
                     }
                 }
@@ -333,7 +389,8 @@ class ContactService {
                 total_contacts: 0,
                 business_contacts: 0,
                 contacts_with_picture: 0,
-                contacts_with_recent_interaction: 0
+                contacts_with_recent_interaction: 0,
+                contacts_synced_today: 0
             };
 
             return {
@@ -344,7 +401,9 @@ class ContactService {
                 picture_percentage: result.total_contacts > 0 ? 
                     Math.round((result.contacts_with_picture / result.total_contacts) * 100) : 0,
                 recent_interaction_percentage: result.total_contacts > 0 ? 
-                    Math.round((result.contacts_with_recent_interaction / result.total_contacts) * 100) : 0
+                    Math.round((result.contacts_with_recent_interaction / result.total_contacts) * 100) : 0,
+                sync_today_percentage: result.total_contacts > 0 ? 
+                    Math.round((result.contacts_synced_today / result.total_contacts) * 100) : 0
             };
 
         } catch (error) {
