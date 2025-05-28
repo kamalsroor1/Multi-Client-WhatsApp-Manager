@@ -353,6 +353,58 @@ class GroupService {
     }
 
     /**
+     * Create default groups for a user (المطلوبة في WhatsAppService)
+     */
+    async createDefaultGroups(userId, placeId, sessionId = null, contacts = []) {
+        try {
+            this.logger.info(`Creating default groups for user ${userId}, place ${placeId}`);
+
+            // تحقق من وجود المجموعة الافتراضية
+            const existingDefaultGroup = await this.ContactGroup.findOne({
+                user_id: userId,
+                place_id: placeId,
+                group_type: 'auto',
+                name: 'فريق العمل الرئيسي'
+            });
+
+            if (existingDefaultGroup) {
+                this.logger.info(`Default group already exists: ${existingDefaultGroup.group_id}`);
+                return [existingDefaultGroup];
+            }
+
+            // إنشاء المجموعة الافتراضية
+            const defaultGroupId = `default_${userId}_${placeId}`;
+            const contactIds = contacts.map(contact => contact._id || contact.id);
+
+            const defaultGroup = new this.ContactGroup({
+                user_id: userId,
+                place_id: placeId,
+                session_id: sessionId,
+                group_id: defaultGroupId,
+                name: 'فريق العمل الرئيسي',
+                description: 'جميع جهات الاتصال النشطة',
+                contact_ids: contactIds,
+                group_type: 'auto',
+                filter_criteria: {
+                    last_interaction_days: 90
+                },
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            await defaultGroup.save();
+            this.logger.success(`Created default group: ${defaultGroup.name} with ${contactIds.length} contacts`);
+
+            return [defaultGroup];
+
+        } catch (error) {
+            this.logger.error('Error creating default groups:', error);
+            throw error;
+        }
+    }
+
+    /**
      * Create a custom group
      */
     async createCustomGroup(userId, placeId, sessionId, groupData) {
