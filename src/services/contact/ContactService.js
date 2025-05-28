@@ -1,4 +1,5 @@
 const Contact = require('../../models/Contact');
+const GroupService = require('./GroupService');
 const Logger = require('../../utils/Logger');
 
 /**
@@ -7,6 +8,7 @@ const Logger = require('../../utils/Logger');
  */
 class ContactService {
     constructor() {
+        this.groupService = new GroupService();
         this.logger = new Logger('ContactService');
     }
 
@@ -35,7 +37,10 @@ class ContactService {
                 this.logger.progress('Saving contacts', i + batch.length, contactsData.length);
             }
             
-            this.logger.success(`Successfully saved ${savedContacts.length} contacts`);
+            // Create default groups after saving contacts
+            await this.groupService.createDefaultGroups(userId, placeId, sessionId, savedContacts);
+            
+            this.logger.success(`Successfully saved ${savedContacts.length} contacts and created default groups`);
             
             return savedContacts;
             
