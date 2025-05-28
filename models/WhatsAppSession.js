@@ -16,7 +16,7 @@ const whatsappSessionSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['initializing', 'qr_ready', 'authenticated','loading_screen', 'connected', 'disconnected', 'error'],
+        enum: ['initializing', 'qr_ready', 'authenticated', 'loading_screen', 'ready', 'fetching_contacts', 'connected', 'disconnected', 'error'],
         default: 'initializing'
     },
     qr_code: {
@@ -38,6 +38,21 @@ const whatsappSessionSchema = new mongoose.Schema({
     total_groups: {
         type: Number,
         default: 0
+    },
+    // Contact fetching progress tracking
+    contacts_fetch_progress: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    contacts_fetch_completed: {
+        type: Boolean,
+        default: false
+    },
+    contacts_fetch_error: {
+        type: String,
+        default: null
     },
     created_at: {
         type: Date,
