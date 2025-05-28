@@ -102,6 +102,14 @@ app.get('/api/whatsapp/stats',
     )
 );
 
+// New API endpoint to manually start background contact fetch
+app.post('/api/whatsapp/start-contact-fetch',
+    validationMiddleware.validateUserPlace,
+    errorMiddleware.asyncHandler(
+        whatsappController.startContactFetch.bind(whatsappController)
+    )
+);
+
 // Contact and Group Management Routes
 app.get('/api/whatsapp/groups',
     validationMiddleware.validateUserPlace,
@@ -255,7 +263,7 @@ const server = app.listen(PORT, () => {
     logger.info(`📊 Health check: http://localhost:${PORT}/api/health`);
     logger.info(`🖼️  Image support: URL-based downloading`);
     logger.info(`📱 Ready for Laravel integration`);
-    logger.info(`⚡ Background contact fetching: ENABLED`);
+    logger.info(`⚡ Background contact fetching: ON DEMAND via API`);
     logger.info(`🏗️  Clean Architecture: IMPLEMENTED`);
     logger.info(`🛡️  Error Handling: CENTRALIZED`);
     logger.info(`📝 Logging: STRUCTURED`);
