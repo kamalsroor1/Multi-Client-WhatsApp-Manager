@@ -174,7 +174,7 @@ class ContactFetchingService {
             await this.contactService.saveContact(contactData);
 
         } catch (error) {
-            this.logger.warn(`Failed to process contact ${contact.id._serialized} for session ${sessionId}:`, error);
+            this.logger.error(`Failed to process contact ${contact.id._serialized} for session ${sessionId}:`, error);
         }
     }
 
