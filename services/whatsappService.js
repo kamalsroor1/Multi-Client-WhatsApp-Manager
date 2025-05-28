@@ -14,6 +14,137 @@ function generateSessionId(userId, placeId) {
     return `session_${userId}_${placeId}_${Date.now()}`;
 }
 
+// Background contact fetching with progress tracking
+async function fetchContactsInBackground(client, userId, placeId, sessionId) {
+    try {
+        console.log(`🔄 Starting background contact fetch for session ${sessionId}...`);
+        
+        // Update session status to indicate fetching is in progress
+        await WhatsAppSession.findOneAndUpdate(
+            { session_id: sessionId },
+            { 
+                status: 'fetching_contacts',
+                contacts_fetch_progress: 0,
+                updated_at: new Date()
+            }
+        );
+
+        const contacts = await client.getContacts();
+        const validContacts = contacts.filter(
+            contact => contact.id?.server === 'c.us' && contact.isWAContact
+        );
+        
+        console.log(`📱 Found ${validContacts.length} valid contacts to process`);
+        
+        const contactsWithDetails = [];
+        const batchSize = 10; // Process 10 contacts at a time
+        const totalContacts = validContacts.length;
+        
+        for (let i = 0; i < validContacts.length; i += batchSize) {
+            const batch = validContacts.slice(i, i + batchSize);
+            
+            // Process batch in parallel
+            const batchPromises = batch.map(async (contact, index) => {
+                try {
+                    // Get additional contact info with timeout
+                    const profilePicPromise = client.getProfilePicUrl(contact.id._serialized)
+                        .catch(() => null);
+                    
+                    // Set timeout for profile pic fetch
+                    const profilePicUrl = await Promise.race([
+                        profilePicPromise,
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('timeout')), 5000)
+                        )
+                    ]).catch(() => null);
+                    
+                    return {
+                        name: contact.name || contact.pushname || contact.verifiedName || '-',
+                        number: contact.id.user,
+                        whatsapp_id: contact.id._serialized,
+                        profile_picture_url: profilePicUrl,
+                        is_business: contact.isBusiness || false,
+                        business_info: contact.businessProfile || {},
+                        last_interaction: contact.lastSeen || null,
+                        last_seen: contact.lastSeen || null
+                    };
+                } catch (contactError) {
+                    console.warn(`⚠️ Error getting details for contact ${contact.id.user}:`, contactError.message);
+                    // Still add basic contact info
+                    return {
+                        name: contact.name || contact.pushname || '-',
+                        number: contact.id.user,
+                        whatsapp_id: contact.id._serialized,
+                        profile_picture_url: null,
+                        is_business: false,
+                        business_info: {},
+                        last_interaction: null,
+                        last_seen: null
+                    };
+                }
+            });
+            
+            // Wait for current batch to complete
+            const batchResults = await Promise.all(batchPromises);
+            contactsWithDetails.push(...batchResults);
+            
+            // Update progress
+            const progress = Math.round(((i + batchSize) / totalContacts) * 100);
+            await WhatsAppSession.findOneAndUpdate(
+                { session_id: sessionId },
+                { 
+                    contacts_fetch_progress: Math.min(progress, 100),
+                    updated_at: new Date()
+                }
+            );
+            
+            console.log(`📊 Contact fetch progress: ${Math.min(progress, 100)}% (${Math.min(i + batchSize, totalContacts)}/${totalContacts})`);
+            
+            // Small delay between batches to prevent overwhelming
+            if (i + batchSize < validContacts.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        // Save contacts to database
+        console.log(`💾 Saving ${contactsWithDetails.length} contacts to database...`);
+        const savedContacts = await contactService.saveContacts(userId, placeId, sessionId, contactsWithDetails);
+        
+        // Count groups
+        const groups = await contactService.getUserGroups(userId, placeId);
+        
+        // Update session with final data
+        await WhatsAppSession.findOneAndUpdate(
+            { session_id: sessionId },
+            {
+                status: 'connected',
+                total_contacts: savedContacts.length,
+                total_groups: groups.length,
+                last_contacts_sync: new Date(),
+                contacts_fetch_progress: 100,
+                contacts_fetch_completed: true,
+                updated_at: new Date()
+            }
+        );
+        
+        console.log(`✅ Background contact fetch completed for session ${sessionId}: ${savedContacts.length} contacts, ${groups.length} groups`);
+        
+    } catch (error) {
+        console.error(`❌ Error in background contact fetch for session ${sessionId}:`, error);
+        
+        // Update session with error status
+        await WhatsAppSession.findOneAndUpdate(
+            { session_id: sessionId },
+            {
+                status: 'connected', // Keep as connected but mark fetch as failed
+                contacts_fetch_error: error.message,
+                contacts_fetch_progress: 0,
+                updated_at: new Date()
+            }
+        );
+    }
+}
+
 // Download image from URL
 async function downloadImageFromUrl(imageUrl) {
     try {
@@ -79,7 +210,7 @@ async function initClient(userId, placeId) {
         let sessionData = await WhatsAppSession.findOne({ 
             user_id: userId, 
             place_id: placeId,
-            status: { $in: ['authenticated', 'connected'] }
+            status: { $in: ['authenticated', 'connected', 'ready', 'fetching_contacts'] }
         });
 
         if (sessionData && clients[sessionData.session_id]?.client) {
@@ -93,7 +224,9 @@ async function initClient(userId, placeId) {
             user_id: userId,
             place_id: placeId,
             session_id: sessionId,
-            status: 'initializing'
+            status: 'initializing',
+            contacts_fetch_progress: 0,
+            contacts_fetch_completed: false
         });
         
         await sessionData.save();
@@ -110,7 +243,7 @@ async function initClient(userId, placeId) {
 
         clients[sessionId] = { client, sessionData };
 
-        // Event handlers (unchanged from previous version)
+        // Event handlers
         client.on('qr', async (qr) => {
             try {
                 const qrDataURL = await qrcode.toDataURL(qr);
@@ -138,13 +271,6 @@ async function initClient(userId, placeId) {
             }
         });
 
-
-        // client.on('ready', () => {
-        //     console.log(`✅ Session ${sessionId} is ready`);
-        // });
-
-
-
         client.on('loading_screen', async () => {
             try {
                 sessionData.status = 'loading_screen';
@@ -158,33 +284,32 @@ async function initClient(userId, placeId) {
             }
         });
 
+        // OPTIMIZED: Ready event now starts background contact fetching
         client.on('ready', async () => {
             try {
-                // Get phone number
-                console.log('client.info',client.info);
+                console.log('client.info', client.info);
                 
                 const clientInfo = client.info;
                 sessionData.phone_number = clientInfo.wid.user;
                 sessionData.name = clientInfo.wid.pushname;
-                sessionData.status = 'ready';
+                sessionData.status = 'ready'; // Mark as ready immediately
                 sessionData.connected_at = new Date();
                 sessionData.qr_code = null;
                 sessionData.updated_at = new Date();
                 
-                // Fetch and save contacts with full details
-                const contacts = await getContactsInternal(client);
-                const savedContacts = await contactService.saveContacts(userId, placeId, sessionId, contacts);
-                
-                sessionData.total_contacts = savedContacts.length;
-                sessionData.last_contacts_sync = new Date();
-                
-                // Count groups
-                const groups = await contactService.getUserGroups(userId, placeId);
-                sessionData.total_groups = groups.length;
-                
                 await sessionData.save();
                 
-                console.log(`✅ Session ${sessionId} is ready with ${contacts.length} contacts and ${groups.length} groups`);
+                console.log(`✅ Session ${sessionId} is ready! Starting background contact fetch...`);
+                
+                // Start contact fetching in background - NON-BLOCKING
+                fetchContactsInBackground(client, userId, placeId, sessionId)
+                    .then(() => {
+                        console.log(`🎉 Background contact fetch completed for session ${sessionId}`);
+                    })
+                    .catch((error) => {
+                        console.error(`❌ Background contact fetch failed for session ${sessionId}:`, error);
+                    });
+                
             } catch (error) {
                 console.error(`Error in ready event for ${sessionId}:`, error);
                 sessionData.status = 'error';
@@ -232,51 +357,6 @@ async function initClient(userId, placeId) {
     }
 }
 
-async function getContactsInternal(client) {
-    try {
-        const contacts = await client.getContacts();
-        const contactsWithDetails = [];
-        
-        for (const contact of contacts) {
-            if (contact.id?.server === 'c.us' && contact.isWAContact) {
-                try {
-                    // Get additional contact info
-                    const profilePicUrl = await client.getProfilePicUrl(contact.id._serialized).catch(() => null);
-                    
-                    contactsWithDetails.push({
-                        name: contact.name || contact.pushname || contact.verifiedName || '-',
-                        number: contact.id.user,
-                        whatsapp_id: contact.id._serialized,
-                        profile_picture_url: profilePicUrl,
-                        is_business: contact.isBusiness || false,
-                        business_info: contact.businessProfile || {},
-                        last_interaction: contact.lastSeen || null,
-                        last_seen: contact.lastSeen || null
-                    });
-                } catch (contactError) {
-                    console.warn(`Error getting details for contact ${contact.id.user}:`, contactError.message);
-                    // Still add basic contact info
-                    contactsWithDetails.push({
-                        name: contact.name || contact.pushname || '-',
-                        number: contact.id.user,
-                        whatsapp_id: contact.id._serialized,
-                        profile_picture_url: null,
-                        is_business: false,
-                        business_info: {},
-                        last_interaction: null,
-                        last_seen: null
-                    });
-                }
-            }
-        }
-        
-        return contactsWithDetails;
-    } catch (error) {
-        console.error('Error fetching contacts:', error);
-        return [];
-    }
-}
-
 async function cleanupSession(sessionId, authPath) {
     try {
         // Remove from memory
@@ -312,9 +392,12 @@ async function getSessionStatus(userId, placeId) {
             phone_number: sessionData.phone_number,
             connected_at: sessionData.connected_at,
             session_exists: true,
-            total_contacts: sessionData.total_contacts,
-            total_groups: sessionData.total_groups,
-            last_contacts_sync: sessionData.last_contacts_sync
+            total_contacts: sessionData.total_contacts || 0,
+            total_groups: sessionData.total_groups || 0,
+            last_contacts_sync: sessionData.last_contacts_sync,
+            contacts_fetch_progress: sessionData.contacts_fetch_progress || 0,
+            contacts_fetch_completed: sessionData.contacts_fetch_completed || false,
+            contacts_fetch_error: sessionData.contacts_fetch_error || null
         };
     } catch (error) {
         console.error('Error getting session status:', error);
@@ -327,7 +410,7 @@ async function sendMessageToGroup(userId, placeId, groupId, message, imageUrl = 
         const sessionData = await WhatsAppSession.findOne({ 
             user_id: userId, 
             place_id: placeId,
-            status: 'connected'
+            status: { $in: ['ready', 'connected', 'fetching_contacts'] }
         });
 
         if (!sessionData) {
@@ -454,7 +537,7 @@ async function sendMessage(userId, placeId, contactId, message, imageUrl = null)
         const sessionData = await WhatsAppSession.findOne({ 
             user_id: userId, 
             place_id: placeId,
-            status: 'connected'
+            status: { $in: ['ready', 'connected', 'fetching_contacts'] }
         });
 
         if (!sessionData) {
