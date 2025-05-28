@@ -171,7 +171,7 @@ class ContactFetchingService {
             };
 
             // Save contact using ContactService
-            await this.contactService.saveContact(contactData);
+            await this.contactService.saveContacts(userId, placeId, sessionId,contactData);
 
         } catch (error) {
             this.logger.error(`Failed to process contact ${contact.id._serialized} for session ${sessionId}:`, error);
