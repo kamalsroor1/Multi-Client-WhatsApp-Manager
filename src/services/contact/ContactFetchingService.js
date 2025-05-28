@@ -3,13 +3,14 @@ const ContactService = require('../contact/ContactService');
 
 /**
  * Service for managing background contact fetching with cumulative sync and 90-day filtering
- * Implements Single Responsibility Principle
+ * Uses existing model structure
  */
 class ContactFetchingService {
     constructor() {
         this.logger = new Logger('ContactFetchingService');
         this.contactService = new ContactService();
         this.Contact = require('../../../models/Contact');
+        this.ContactGroup = require('../../../models/ContactGroup');
     }
 
     /**
@@ -214,31 +215,50 @@ class ContactFetchingService {
      */
     async processContactWithSync(contact, userId, placeId, sessionId) {
         try {
-            // Prepare contact data for saving
-            const contactData = {
-                whatsapp_id: contact.id._serialized,
-                name: contact.name || contact.pushname || 'Unknown',
-                formatted_name: contact.formattedName || contact.name || contact.pushname || 'Unknown',
-                number: contact.number,
-                phone_number: `+${contact.number}`,
-                is_business: contact.isBusiness || false,
-                profile_picture_url: null, // Will be fetched separately if needed
-                last_seen: contact.lastSeen || null,
-                is_group: contact.isGroup || false,
-                last_interaction: new Date(), // Mark this sync as interaction
-                status: 'active'
-            };
+            // Generate unique contact ID
+            const contactId = `${userId}_${placeId}_${contact.id._serialized}`;
 
             // Check if contact exists
-            const contactId = this.contactService.generateContactId(userId, placeId, contact.id._serialized);
-            const existingContact = await this.Contact.findOne({ contact_id: contactId });
+            const existingContact = await this.Contact.findOne({ 
+                contact_id: contactId 
+            });
 
-            // Save contact using ContactService (will update if exists, create if new)
-            const savedContact = await this.contactService.saveOrUpdateContact(userId, placeId, sessionId, contactData);
+            // Prepare contact data for saving
+            const contactData = {
+                user_id: userId,
+                place_id: placeId,
+                session_id: sessionId,
+                contact_id: contactId,
+                name: contact.name || contact.pushname || 'Unknown',
+                number: contact.number,
+                whatsapp_id: contact.id._serialized,
+                profile_picture_url: null, // Will be fetched separately if needed
+                is_business: contact.isBusiness || false,
+                last_seen: contact.lastSeen ? new Date(contact.lastSeen * 1000) : null,
+                last_interaction: new Date(), // Mark this sync as interaction
+                status: 'active',
+                tags: [],
+                updated_at: new Date()
+            };
+
+            let savedContact;
+            let isNew = false;
+
+            if (existingContact) {
+                // Update existing contact
+                Object.assign(existingContact, contactData);
+                savedContact = await existingContact.save();
+            } else {
+                // Create new contact
+                contactData.created_at = new Date();
+                savedContact = new this.Contact(contactData);
+                await savedContact.save();
+                isNew = true;
+            }
 
             return {
                 contact: savedContact,
-                isNew: !existingContact // True if contact didn't exist before
+                isNew: isNew
             };
 
         } catch (error) {
@@ -329,12 +349,47 @@ class ContactFetchingService {
         try {
             this.logger.start(`Updating groups with cumulative contact data (90-day filtered) for session ${sessionId}`);
             
-            // Get GroupService
-            const GroupService = require('./GroupService');
-            const groupService = new GroupService();
-            
-            // Create default groups if they don't exist
-            await groupService.createDefaultGroups(userId, placeId, sessionId);
+            // Check if default group exists
+            const defaultGroup = await this.ContactGroup.findOne({
+                user_id: userId,
+                place_id: placeId,
+                group_type: 'auto',
+                name: 'فريق العمل الرئيسي'
+            });
+
+            if (!defaultGroup) {
+                // Create default group with all contacts from last 90 days
+                const contactIds = contactsLast90Days.map(contact => contact._id);
+                
+                const newDefaultGroup = new this.ContactGroup({
+                    user_id: userId,
+                    place_id: placeId,
+                    session_id: sessionId,
+                    group_id: `default_${userId}_${placeId}`,
+                    name: 'فريق العمل الرئيسي',
+                    description: 'جميع جهات الاتصال النشطة من آخر 90 يوم',
+                    contact_ids: contactIds,
+                    group_type: 'auto',
+                    filter_criteria: {
+                        last_interaction_days: 90
+                    },
+                    is_active: true,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+
+                await newDefaultGroup.save();
+                this.logger.info(`Created default group with ${contactIds.length} contacts from last 90 days`);
+            } else {
+                // Update existing default group with new contacts
+                const contactIds = contactsLast90Days.map(contact => contact._id);
+                
+                defaultGroup.contact_ids = contactIds;
+                defaultGroup.updated_at = new Date();
+                await defaultGroup.save();
+                
+                this.logger.info(`Updated default group with ${contactIds.length} contacts from last 90 days`);
+            }
             
             this.logger.success(`Groups updated with ${contactsLast90Days.length} contacts from last 90 days for session ${sessionId}`);
         } catch (error) {
