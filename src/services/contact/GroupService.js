@@ -20,11 +20,11 @@ class GroupService {
 
     /**
      * Create default groups when contacts are imported
-     * Modified to update existing groups with new contacts instead of skipping them
+     * Modified to merge new contacts with existing ones instead of replacing them
      */
     async createDefaultGroups(userId, placeId, sessionId, contacts = []) {
         try {
-            this.logger.start(`Creating/updating default groups for user ${userId}`);
+            this.logger.start(`Creating/updating default groups for user ${userId} with cumulative sync`);
             
             const now = new Date();
             const ninetyDaysAgo = new Date(now.getTime() - (90 * 24 * 60 * 60 * 1000));
@@ -47,15 +47,22 @@ class GroupService {
             const groupsToCreate = [];
             const groupsToUpdate = [];
             
-            // All Contacts group
+            // All Contacts group - merge with existing contacts
             const allContactsName = 'جميع الارقام';
             if (existingGroupsMap[allContactsName]) {
-                // Update existing group
+                // Merge new contacts with existing ones
                 const existingGroup = existingGroupsMap[allContactsName];
-                existingGroup.contact_ids = contacts.map(c => c._id);
+                const existingContactIds = existingGroup.contact_ids.map(id => id.toString());
+                const newContactIds = contacts.map(c => c._id.toString());
+                
+                // Combine existing and new contact IDs, removing duplicates
+                const mergedContactIds = [...new Set([...existingContactIds, ...newContactIds])];
+                
+                existingGroup.contact_ids = mergedContactIds;
                 existingGroup.updated_at = new Date();
                 groupsToUpdate.push(existingGroup);
-                this.logger.info(`Will update "${allContactsName}" group with ${contacts.length} contacts`);
+                
+                this.logger.info(`Will merge "${allContactsName}" group: ${existingContactIds.length} existing + ${newContactIds.length} new = ${mergedContactIds.length} total contacts`);
             } else {
                 // Create new group
                 groupsToCreate.push({
@@ -72,19 +79,43 @@ class GroupService {
                 this.logger.info(`Will create "${allContactsName}" group with ${contacts.length} contacts`);
             }
             
-            // Recent Contacts group (last 90 days)
+            // Recent Contacts group (last 90 days) - merge with existing contacts
             const recentContactsName = 'اخر الارقام (90 يوم)';
-            const recentContacts = contacts.filter(contact => 
+            const newRecentContacts = contacts.filter(contact => 
                 contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
             );
             
             if (existingGroupsMap[recentContactsName]) {
-                // Update existing group
+                // Get existing contacts in this group
                 const existingGroup = existingGroupsMap[recentContactsName];
-                existingGroup.contact_ids = recentContacts.map(c => c._id);
+                
+                // Get all contacts that are either:
+                // 1. Already in the group OR
+                // 2. New contacts with recent interaction
+                const Contact = require('../../../models/Contact');
+                
+                // Get existing contacts that still have recent interaction
+                const existingContactsInDb = await Contact.find({
+                    _id: { $in: existingGroup.contact_ids },
+                    user_id: userId,
+                    place_id: placeId,
+                    status: 'active'
+                });
+                
+                const stillRecentExistingContacts = existingContactsInDb.filter(contact =>
+                    contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
+                );
+                
+                // Combine existing recent contacts with new recent contacts
+                const existingRecentIds = stillRecentExistingContacts.map(c => c._id.toString());
+                const newRecentIds = newRecentContacts.map(c => c._id.toString());
+                const mergedRecentIds = [...new Set([...existingRecentIds, ...newRecentIds])];
+                
+                existingGroup.contact_ids = mergedRecentIds;
                 existingGroup.updated_at = new Date();
                 groupsToUpdate.push(existingGroup);
-                this.logger.info(`Will update "${recentContactsName}" group with ${recentContacts.length} contacts`);
+                
+                this.logger.info(`Will merge "${recentContactsName}" group: ${existingRecentIds.length} existing recent + ${newRecentIds.length} new recent = ${mergedRecentIds.length} total recent contacts`);
             } else {
                 // Create new group
                 groupsToCreate.push({
@@ -94,13 +125,13 @@ class GroupService {
                     group_id: this.generateGroupId(userId, placeId, 'recent'),
                     name: recentContactsName,
                     description: 'Contacts with activity in the last 90 days',
-                    contact_ids: recentContacts.map(c => c._id),
+                    contact_ids: newRecentContacts.map(c => c._id),
                     group_type: 'auto',
                     filter_criteria: {
                         last_interaction_days: 90
                     }
                 });
-                this.logger.info(`Will create "${recentContactsName}" group with ${recentContacts.length} contacts`);
+                this.logger.info(`Will create "${recentContactsName}" group with ${newRecentContacts.length} contacts`);
             }
             
             // Create new groups
@@ -110,18 +141,18 @@ class GroupService {
                 this.logger.success(`Created ${createdGroups.length} new default groups`);
             }
             
-            // Update existing groups
+            // Update existing groups with merged contacts
             let updatedGroups = [];
             if (groupsToUpdate.length > 0) {
                 for (const group of groupsToUpdate) {
                     await group.save();
                     updatedGroups.push(group);
                 }
-                this.logger.success(`Updated ${updatedGroups.length} existing default groups`);
+                this.logger.success(`Updated ${updatedGroups.length} existing default groups with merged contacts`);
             }
             
             // Log summary
-            this.logger.success(`Groups processed: ${createdGroups.length} created, ${updatedGroups.length} updated for user ${userId}`);
+            this.logger.success(`Groups processed with cumulative sync: ${createdGroups.length} created, ${updatedGroups.length} merged for user ${userId}`);
             
             // Return all groups (existing + newly created)
             const allGroups = await ContactGroup.find({
@@ -134,7 +165,7 @@ class GroupService {
             return allGroups;
             
         } catch (error) {
-            this.logger.error('Error creating/updating default groups:', error);
+            this.logger.error('Error creating/updating default groups with cumulative sync:', error);
             throw new Error(`Failed to create/update default groups: ${error.message}`);
         }
     }
