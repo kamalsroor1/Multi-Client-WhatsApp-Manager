@@ -8,6 +8,18 @@ const Logger = require('../utils/Logger');
 class ValidationMiddleware {
     constructor() {
         this.logger = new Logger('ValidationMiddleware');
+        
+        // Bind methods to preserve 'this' context
+        this.validateUserPlace = this.validateUserPlace.bind(this);
+        this.validatePagination = this.validatePagination.bind(this);
+        this.validateGroupId = this.validateGroupId.bind(this);
+        this.validateGroupSearch = this.validateGroupSearch.bind(this);
+        this.validateContactId = this.validateContactId.bind(this);
+        this.validateMessage = this.validateMessage.bind(this);
+        this.validateImageUrl = this.validateImageUrl.bind(this);
+        this.validateGroupCreation = this.validateGroupCreation.bind(this);
+        this.validateGroupUpdate = this.validateGroupUpdate.bind(this);
+        this.validateBulkRecipients = this.validateBulkRecipients.bind(this);
     }
 
     /**
@@ -362,7 +374,7 @@ class ValidationMiddleware {
         // إزالة الأحرف الخطيرة وSQL injection
         return searchTerm
             .trim()
-            .replace(/[<>'";&]/g, '') // إزالة أحرف خطيرة
+            .replace(/[<>'\";&]/g, '') // إزالة أحرف خطيرة
             .substring(0, 100); // الحد الأقصى 100 حرف
     }
 
