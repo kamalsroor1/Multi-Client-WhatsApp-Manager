@@ -89,7 +89,7 @@ class ContactController {
                 user_id, 
                 place_id, 
                 page = 1, 
-                limit = 50,
+                limit = 15,
                 search,           // البحث بالاسم أو الرقم
                 search_type = 'all' // نوع البحث: 'name', 'phone', 'all'
             } = req.query;
