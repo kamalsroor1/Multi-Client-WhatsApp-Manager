@@ -92,7 +92,7 @@ class WhatsAppController {
     }
 
     /**
-     * Start background contact fetch manually - Enhanced with pre-validation
+     * Start background contact fetch manually - Enhanced with pre-validation and allow restart for completed sessions
      */
     async startContactFetch(req, res) {
         try {
@@ -110,12 +110,31 @@ class WhatsAppController {
                 return ApiResponse.error(res, 'No WhatsApp session found. Please initialize a session first.', 404);
             }
 
+            // Special handling for completed sessions - allow restart even if client_ready is false
+            if (sessionStatus.status === 'completed') {
+                this.logger.info(`Session is completed, allowing contact fetch restart for user ${user_id}, place ${place_id}`);
+                
+                // Attempt to start contact fetch for completed sessions
+                try {
+                    const result = await this.whatsAppService.startBackgroundContactFetch(
+                        parseInt(user_id), 
+                        parseInt(place_id)
+                    );
+                    
+                    return ApiResponse.success(res, result, 'Background contact fetch restarted successfully for completed session');
+                } catch (fetchError) {
+                    this.logger.warn(`Failed to restart contact fetch for completed session: ${fetchError.message}`);
+                    // Fall through to normal validation if the direct attempt fails
+                }
+            }
+
+            // Normal validation for non-completed sessions
             if (!sessionStatus.client_ready) {
                 return ApiResponse.error(res, `Session is not ready for contact fetch. Current status: ${sessionStatus.status}. Please wait for session to be ready or restart the session.`, 400);
             }
 
-            if (!['ready', 'connected'].includes(sessionStatus.status)) {
-                return ApiResponse.error(res, `Cannot start contact fetch. Session status: ${sessionStatus.status}. Required status: ready or connected.`, 400);
+            if (!['ready', 'connected', 'completed'].includes(sessionStatus.status)) {
+                return ApiResponse.error(res, `Cannot start contact fetch. Session status: ${sessionStatus.status}. Required status: ready, connected, or completed.`, 400);
             }
 
             // If all checks pass, start the contact fetch
