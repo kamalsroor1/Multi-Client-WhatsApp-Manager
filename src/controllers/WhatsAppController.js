@@ -92,14 +92,33 @@ class WhatsAppController {
     }
 
     /**
-     * Start background contact fetch manually
+     * Start background contact fetch manually - Enhanced with pre-validation
      */
     async startContactFetch(req, res) {
         try {
             const { user_id, place_id } = req.body;
             
-            this.logger.info(`Starting manual contact fetch for user ${user_id}, place ${place_id}`);
+            this.logger.info(`Attempting to start contact fetch for user ${user_id}, place ${place_id}`);
             
+            // First, check session status to provide better error messages
+            const sessionStatus = await this.whatsAppService.getSessionStatus(
+                parseInt(user_id), 
+                parseInt(place_id)
+            );
+
+            if (!sessionStatus.session_exists) {
+                return ApiResponse.error(res, 'No WhatsApp session found. Please initialize a session first.', 404);
+            }
+
+            if (!sessionStatus.client_ready) {
+                return ApiResponse.error(res, `Session is not ready for contact fetch. Current status: ${sessionStatus.status}. Please wait for session to be ready or restart the session.`, 400);
+            }
+
+            if (!['ready', 'connected'].includes(sessionStatus.status)) {
+                return ApiResponse.error(res, `Cannot start contact fetch. Session status: ${sessionStatus.status}. Required status: ready or connected.`, 400);
+            }
+
+            // If all checks pass, start the contact fetch
             const result = await this.whatsAppService.startBackgroundContactFetch(
                 parseInt(user_id), 
                 parseInt(place_id)
@@ -108,7 +127,23 @@ class WhatsAppController {
             return ApiResponse.success(res, result, 'Background contact fetch started successfully');
         } catch (error) {
             this.logger.error('Error starting contact fetch:', error);
-            return ApiResponse.error(res, error.message, 500);
+            
+            // Provide more specific error messages based on the error
+            let statusCode = 500;
+            let message = error.message;
+            
+            if (error.message.includes('Client not available')) {
+                statusCode = 503;
+                message = 'WhatsApp client is not available. Please restart the session and try again.';
+            } else if (error.message.includes('not ready')) {
+                statusCode = 400;
+                message = 'Session is not ready for contact fetching. Please wait or restart the session.';
+            } else if (error.message.includes('No session found')) {
+                statusCode = 404;
+                message = 'No active session found. Please initialize a WhatsApp session first.';
+            }
+            
+            return ApiResponse.error(res, message, statusCode);
         }
     }
 
@@ -373,6 +408,10 @@ class WhatsAppController {
 
         if (status.total_contacts === 0 && status.status === 'ready') {
             recommendations.push('Use the contact fetch API to start contact synchronization');
+        }
+
+        if (!status.client_ready && status.status === 'ready') {
+            recommendations.push('Session appears ready but client is not available - consider restarting');
         }
 
         if (status.last_activity) {
