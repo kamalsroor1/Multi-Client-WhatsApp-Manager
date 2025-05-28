@@ -20,42 +20,51 @@ class GroupService {
 
     /**
      * Create default groups when contacts are imported
+     * Modified to prevent duplicate groups and always create "اخر الارقام (90 يوم)" even if empty
      */
-    async createDefaultGroups(userId, placeId, sessionId, contacts) {
+    async createDefaultGroups(userId, placeId, sessionId, contacts = []) {
         try {
             this.logger.start(`Creating default groups for user ${userId}`);
             
             const now = new Date();
             const ninetyDaysAgo = new Date(now.getTime() - (90 * 24 * 60 * 60 * 1000));
             
-            // Remove existing default groups
-            await ContactGroup.deleteMany({
+            // Check existing groups to prevent duplicates
+            const existingGroups = await ContactGroup.find({
                 user_id: userId,
                 place_id: placeId,
-                group_type: 'auto'
+                group_type: 'auto',
+                is_active: true
             });
+
+            const existingGroupNames = existingGroups.map(group => group.name);
+            this.logger.info(`Found ${existingGroups.length} existing auto groups: ${existingGroupNames.join(', ')}`);
             
             const groupsToCreate = [];
             
-            // All Contacts group
-            groupsToCreate.push({
-                user_id: userId,
-                place_id: placeId,
-                session_id: sessionId,
-                group_id: this.generateGroupId(userId, placeId, 'all'),
-                name: 'جميع الارقام',
-                description: 'All WhatsApp contacts',
-                contact_ids: contacts.map(c => c._id),
-                group_type: 'auto',
-                filter_criteria: {}
-            });
+            // All Contacts group - only create if doesn't exist
+            if (!existingGroupNames.includes('جميع الارقام')) {
+                groupsToCreate.push({
+                    user_id: userId,
+                    place_id: placeId,
+                    session_id: sessionId,
+                    group_id: this.generateGroupId(userId, placeId, 'all'),
+                    name: 'جميع الارقام',
+                    description: 'All WhatsApp contacts',
+                    contact_ids: contacts.map(c => c._id),
+                    group_type: 'auto',
+                    filter_criteria: {}
+                });
+            } else {
+                this.logger.info('Group "جميع الارقام" already exists, skipping creation');
+            }
             
-            // Recent Contacts group (last 90 days)
-            const recentContacts = contacts.filter(contact => 
-                contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
-            );
-            
-            if (recentContacts.length > 0) {
+            // Recent Contacts group (last 90 days) - always create if doesn't exist, even if empty
+            if (!existingGroupNames.includes('اخر الارقام (90 يوم)')) {
+                const recentContacts = contacts.filter(contact => 
+                    contact.last_interaction && contact.last_interaction >= ninetyDaysAgo
+                );
+                
                 groupsToCreate.push({
                     user_id: userId,
                     place_id: placeId,
@@ -69,15 +78,30 @@ class GroupService {
                         last_interaction_days: 90
                     }
                 });
+                
+                this.logger.info(`Will create "اخر الارقام (90 يوم)" group with ${recentContacts.length} contacts`);
+            } else {
+                this.logger.info('Group "اخر الارقام (90 يوم)" already exists, skipping creation');
             }
             
+            // Create only new groups
+            let createdGroups = [];
+            if (groupsToCreate.length > 0) {
+                createdGroups = await ContactGroup.insertMany(groupsToCreate);
+                this.logger.success(`Created ${createdGroups.length} new default groups for user ${userId}`);
+            } else {
+                this.logger.info('No new groups to create - all default groups already exist');
+            }
             
-            // Create all groups
-            const createdGroups = await ContactGroup.insertMany(groupsToCreate);
+            // Return all groups (existing + newly created)
+            const allGroups = await ContactGroup.find({
+                user_id: userId,
+                place_id: placeId,
+                group_type: 'auto',
+                is_active: true
+            });
             
-            this.logger.success(`Created ${createdGroups.length} default groups for user ${userId}`);
-            
-            return createdGroups;
+            return allGroups;
             
         } catch (error) {
             this.logger.error('Error creating default groups:', error);
