@@ -2,7 +2,8 @@ const ApiResponse = require('../utils/ApiResponse');
 const Logger = require('../utils/Logger');
 
 /**
- * Validation middleware for input validation
+ * Validation middleware for request validation
+ * Implements centralized validation logic
  */
 class ValidationMiddleware {
     constructor() {
@@ -10,167 +11,400 @@ class ValidationMiddleware {
     }
 
     /**
-     * Validate required user and place IDs
+     * Validate user and place parameters
      */
-    validateUserPlace = (req, res, next) => {
-        const { user_id, place_id } = req.method === 'GET' ? req.query : req.body;
+    validateUserPlace(req, res, next) {
+        try {
+            const { user_id, place_id } = req.method === 'GET' ? req.query : req.body;
 
-        if (!user_id || !place_id) {
-            this.logger.warn('Missing user_id or place_id', { method: req.method, path: req.path });
-            return ApiResponse.error(res, 'user_id and place_id are required', 400);
-        }
-
-        // Validate that they are numbers
-        if (isNaN(parseInt(user_id)) || isNaN(parseInt(place_id))) {
-            this.logger.warn('Invalid user_id or place_id format', { user_id, place_id });
-            return ApiResponse.error(res, 'user_id and place_id must be valid numbers', 400);
-        }
-
-        next();
-    }
-
-    /**
-     * Validate message content
-     */
-    validateMessage = (req, res, next) => {
-        const { message, image_url } = req.body;
-
-        if (!message && !image_url) {
-            this.logger.warn('No message content provided');
-            return ApiResponse.error(res, 'Either message or image_url is required', 400);
-        }
-
-        next();
-    }
-
-    /**
-     * Validate image URL format
-     */
-    validateImageUrl = (req, res, next) => {
-        const { image_url } = req.body;
-        
-        if (image_url) {
-            try {
-                const url = new URL(image_url);
-                if (!['http:', 'https:'].includes(url.protocol)) {
-                    this.logger.warn('Invalid image URL protocol', { image_url });
-                    return ApiResponse.error(res, 'Invalid image URL protocol. Only HTTP and HTTPS are allowed.', 400);
-                }
-            } catch (error) {
-                this.logger.warn('Invalid image URL format', { image_url, error: error.message });
-                return ApiResponse.error(res, 'Invalid image URL format.', 400);
+            if (!user_id) {
+                return ApiResponse.error(res, 'user_id is required', 400);
             }
-        }
-        
-        next();
-    }
 
-    /**
-     * Validate bulk message recipients
-     */
-    validateBulkRecipients = (req, res, next) => {
-        const { recipients } = req.body;
-
-        if (!recipients || !Array.isArray(recipients)) {
-            this.logger.warn('Invalid recipients format');
-            return ApiResponse.error(res, 'recipients array is required', 400);
-        }
-
-        if (recipients.length === 0) {
-            this.logger.warn('Empty recipients array');
-            return ApiResponse.error(res, 'recipients array cannot be empty', 400);
-        }
-
-        // Validate each recipient
-        for (let i = 0; i < recipients.length; i++) {
-            const recipient = recipients[i];
-            if (!recipient.contact_id && !recipient.number) {
-                this.logger.warn(`Invalid recipient at index ${i}`, { recipient });
-                return ApiResponse.error(res, `Recipient at index ${i} must have either contact_id or number`, 400);
+            if (!place_id) {
+                return ApiResponse.error(res, 'place_id is required', 400);
             }
+
+            // Validate that they are valid integers
+            if (!Number.isInteger(parseInt(user_id)) || parseInt(user_id) <= 0) {
+                return ApiResponse.error(res, 'user_id must be a positive integer', 400);
+            }
+
+            if (!Number.isInteger(parseInt(place_id)) || parseInt(place_id) <= 0) {
+                return ApiResponse.error(res, 'place_id must be a positive integer', 400);
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateUserPlace:', error);
+            return ApiResponse.error(res, 'Invalid user or place parameters', 400);
         }
-
-        next();
-    }
-
-    /**
-     * Validate group creation data
-     */
-    validateGroupCreation = (req, res, next) => {
-        const { name, contact_ids } = req.body;
-
-        if (!name || typeof name !== 'string' || name.trim().length === 0) {
-            this.logger.warn('Invalid group name');
-            return ApiResponse.error(res, 'Group name is required and must be a non-empty string', 400);
-        }
-
-        if (!contact_ids || !Array.isArray(contact_ids) || contact_ids.length === 0) {
-            this.logger.warn('Invalid contact_ids for group creation');
-            return ApiResponse.error(res, 'contact_ids array is required and cannot be empty', 400);
-        }
-
-        next();
-    }
-
-    /**
-     * Validate group update data
-     */
-    validateGroupUpdate = (req, res, next) => {
-        const { contact_ids } = req.body;
-
-        if (!contact_ids || !Array.isArray(contact_ids)) {
-            this.logger.warn('Invalid contact_ids for group update');
-            return ApiResponse.error(res, 'contact_ids array is required', 400);
-        }
-
-        next();
     }
 
     /**
      * Validate pagination parameters
      */
-    validatePagination = (req, res, next) => {
-        const { page, limit } = req.query;
+    validatePagination(req, res, next) {
+        try {
+            const { page, limit } = req.query;
 
-        if (page && (isNaN(parseInt(page)) || parseInt(page) < 1)) {
-            this.logger.warn('Invalid page parameter', { page });
-            return ApiResponse.error(res, 'page must be a positive number', 400);
+            if (page !== undefined) {
+                const pageNum = parseInt(page);
+                if (!Number.isInteger(pageNum) || pageNum < 1) {
+                    return ApiResponse.error(res, 'page must be a positive integer', 400);
+                }
+            }
+
+            if (limit !== undefined) {
+                const limitNum = parseInt(limit);
+                if (!Number.isInteger(limitNum) || limitNum < 1 || limitNum > 1000) {
+                    return ApiResponse.error(res, 'limit must be between 1 and 1000', 400);
+                }
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validatePagination:', error);
+            return ApiResponse.error(res, 'Invalid pagination parameters', 400);
         }
-
-        if (limit && (isNaN(parseInt(limit)) || parseInt(limit) < 1 || parseInt(limit) > 100)) {
-            this.logger.warn('Invalid limit parameter', { limit });
-            return ApiResponse.error(res, 'limit must be a number between 1 and 100', 400);
-        }
-
-        next();
-    }
-
-    /**
-     * Validate contact ID parameter
-     */
-    validateContactId = (req, res, next) => {
-        const { contact_id } = req.params;
-
-        if (!contact_id || typeof contact_id !== 'string' || contact_id.trim().length === 0) {
-            this.logger.warn('Invalid contact_id parameter', { contact_id });
-            return ApiResponse.error(res, 'Valid contact_id is required', 400);
-        }
-
-        next();
     }
 
     /**
      * Validate group ID parameter
      */
-    validateGroupId = (req, res, next) => {
-        const { group_id } = req.params;
+    validateGroupId(req, res, next) {
+        try {
+            const { group_id } = req.params;
 
-        if (!group_id || typeof group_id !== 'string' || group_id.trim().length === 0) {
-            this.logger.warn('Invalid group_id parameter', { group_id });
-            return ApiResponse.error(res, 'Valid group_id is required', 400);
+            if (!group_id) {
+                return ApiResponse.error(res, 'group_id is required', 400);
+            }
+
+            // Basic validation - group_id should be a non-empty string
+            if (typeof group_id !== 'string' || group_id.trim().length === 0) {
+                return ApiResponse.error(res, 'group_id must be a non-empty string', 400);
+            }
+
+            // Length validation
+            if (group_id.length > 255) {
+                return ApiResponse.error(res, 'group_id too long', 400);
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateGroupId:', error);
+            return ApiResponse.error(res, 'Invalid group ID', 400);
         }
+    }
 
-        next();
+    /**
+     * Validate group search parameters
+     */
+    validateGroupSearch(req, res, next) {
+        try {
+            const { search, search_type } = req.query;
+            
+            // إذا كان هناك بحث، التحقق من صحته
+            if (search !== undefined) {
+                // التحقق من طول البحث
+                if (search.trim().length < 1) {
+                    return ApiResponse.error(res, 'Search term must be at least 1 character long', 400);
+                }
+                
+                if (search.trim().length > 100) {
+                    return ApiResponse.error(res, 'Search term must be less than 100 characters', 400);
+                }
+
+                // تنظيف المدخلات من الأحرف الخطيرة
+                const sanitizedSearch = this.sanitizeSearchInput(search);
+                if (sanitizedSearch !== search.trim()) {
+                    return ApiResponse.error(res, 'Search term contains invalid characters', 400);
+                }
+            }
+
+            // التحقق من نوع البحث
+            if (search_type !== undefined) {
+                const validSearchTypes = ['name', 'phone', 'all'];
+                if (!validSearchTypes.includes(search_type)) {
+                    return ApiResponse.error(res, 'search_type must be one of: name, phone, all', 400);
+                }
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateGroupSearch:', error);
+            return ApiResponse.error(res, 'Invalid search parameters', 400);
+        }
+    }
+
+    /**
+     * Validate contact ID parameter
+     */
+    validateContactId(req, res, next) {
+        try {
+            const { contact_id } = req.params;
+
+            if (!contact_id) {
+                return ApiResponse.error(res, 'contact_id is required', 400);
+            }
+
+            if (typeof contact_id !== 'string' || contact_id.trim().length === 0) {
+                return ApiResponse.error(res, 'contact_id must be a non-empty string', 400);
+            }
+
+            if (contact_id.length > 255) {
+                return ApiResponse.error(res, 'contact_id too long', 400);
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateContactId:', error);
+            return ApiResponse.error(res, 'Invalid contact ID', 400);
+        }
+    }
+
+    /**
+     * Validate message content
+     */
+    validateMessage(req, res, next) {
+        try {
+            const { message } = req.body;
+
+            if (!message) {
+                return ApiResponse.error(res, 'message is required', 400);
+            }
+
+            if (typeof message !== 'string') {
+                return ApiResponse.error(res, 'message must be a string', 400);
+            }
+
+            if (message.trim().length === 0) {
+                return ApiResponse.error(res, 'message cannot be empty', 400);
+            }
+
+            if (message.length > 4096) {
+                return ApiResponse.error(res, 'message too long (max 4096 characters)', 400);
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateMessage:', error);
+            return ApiResponse.error(res, 'Invalid message', 400);
+        }
+    }
+
+    /**
+     * Validate image URL
+     */
+    validateImageUrl(req, res, next) {
+        try {
+            const { image_url } = req.body;
+
+            // Image URL is optional
+            if (!image_url) {
+                return next();
+            }
+
+            if (typeof image_url !== 'string') {
+                return ApiResponse.error(res, 'image_url must be a string', 400);
+            }
+
+            // Basic URL validation
+            try {
+                new URL(image_url);
+            } catch (urlError) {
+                return ApiResponse.error(res, 'image_url must be a valid URL', 400);
+            }
+
+            // Check if URL looks like an image
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+            const hasImageExtension = imageExtensions.some(ext => 
+                image_url.toLowerCase().includes(ext)
+            );
+
+            if (!hasImageExtension && !image_url.includes('image') && !image_url.includes('photo')) {
+                this.logger.warn(`Potentially non-image URL: ${image_url}`);
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateImageUrl:', error);
+            return ApiResponse.error(res, 'Invalid image URL', 400);
+        }
+    }
+
+    /**
+     * Validate group creation data
+     */
+    validateGroupCreation(req, res, next) {
+        try {
+            const { name, contact_ids } = req.body;
+
+            if (!name) {
+                return ApiResponse.error(res, 'Group name is required', 400);
+            }
+
+            if (typeof name !== 'string' || name.trim().length === 0) {
+                return ApiResponse.error(res, 'Group name must be a non-empty string', 400);
+            }
+
+            if (name.length > 100) {
+                return ApiResponse.error(res, 'Group name too long (max 100 characters)', 400);
+            }
+
+            if (!contact_ids || !Array.isArray(contact_ids)) {
+                return ApiResponse.error(res, 'contact_ids must be an array', 400);
+            }
+
+            if (contact_ids.length === 0) {
+                return ApiResponse.error(res, 'At least one contact is required', 400);
+            }
+
+            if (contact_ids.length > 1000) {
+                return ApiResponse.error(res, 'Too many contacts (max 1000)', 400);
+            }
+
+            // Validate each contact ID
+            for (const contactId of contact_ids) {
+                if (typeof contactId !== 'string' || contactId.trim().length === 0) {
+                    return ApiResponse.error(res, 'All contact IDs must be non-empty strings', 400);
+                }
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateGroupCreation:', error);
+            return ApiResponse.error(res, 'Invalid group creation data', 400);
+        }
+    }
+
+    /**
+     * Validate group update data
+     */
+    validateGroupUpdate(req, res, next) {
+        try {
+            const { contact_ids } = req.body;
+
+            if (!contact_ids || !Array.isArray(contact_ids)) {
+                return ApiResponse.error(res, 'contact_ids must be an array', 400);
+            }
+
+            if (contact_ids.length > 1000) {
+                return ApiResponse.error(res, 'Too many contacts (max 1000)', 400);
+            }
+
+            // Validate each contact ID
+            for (const contactId of contact_ids) {
+                if (typeof contactId !== 'string' || contactId.trim().length === 0) {
+                    return ApiResponse.error(res, 'All contact IDs must be non-empty strings', 400);
+                }
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateGroupUpdate:', error);
+            return ApiResponse.error(res, 'Invalid group update data', 400);
+        }
+    }
+
+    /**
+     * Validate bulk recipients for messaging
+     */
+    validateBulkRecipients(req, res, next) {
+        try {
+            const { recipients } = req.body;
+
+            if (!recipients || !Array.isArray(recipients)) {
+                return ApiResponse.error(res, 'recipients must be an array', 400);
+            }
+
+            if (recipients.length === 0) {
+                return ApiResponse.error(res, 'At least one recipient is required', 400);
+            }
+
+            if (recipients.length > 100) {
+                return ApiResponse.error(res, 'Too many recipients (max 100 per request)', 400);
+            }
+
+            // Validate each recipient
+            for (const recipient of recipients) {
+                if (typeof recipient !== 'string' || recipient.trim().length === 0) {
+                    return ApiResponse.error(res, 'All recipients must be non-empty strings', 400);
+                }
+            }
+
+            next();
+        } catch (error) {
+            this.logger.error('Error in validateBulkRecipients:', error);
+            return ApiResponse.error(res, 'Invalid bulk recipients data', 400);
+        }
+    }
+
+    /**
+     * Validate phone number format (helper method)
+     */
+    validatePhoneFormat(phone) {
+        // إزالة المسافات والرموز الخاصة
+        const cleanPhone = phone.replace(/[\s\-\(\)]/g, '');
+        
+        // التحقق من أن الرقم يحتوي على أرقام فقط (مع إمكانية وجود + في البداية)
+        const phoneRegex = /^\+?[0-9]{8,15}$/;
+        
+        return phoneRegex.test(cleanPhone);
+    }
+
+    /**
+     * Sanitize search input (helper method)
+     */
+    sanitizeSearchInput(searchTerm) {
+        if (!searchTerm) return '';
+        
+        // إزالة الأحرف الخطيرة وSQL injection
+        return searchTerm
+            .trim()
+            .replace(/[<>'";&]/g, '') // إزالة أحرف خطيرة
+            .substring(0, 100); // الحد الأقصى 100 حرف
+    }
+
+    /**
+     * Generic validation helper for required fields
+     */
+    validateRequiredFields(data, requiredFields) {
+        const missing = [];
+        
+        for (const field of requiredFields) {
+            if (data[field] === undefined || data[field] === null || data[field] === '') {
+                missing.push(field);
+            }
+        }
+        
+        return missing;
+    }
+
+    /**
+     * Validate email format (helper method)
+     */
+    validateEmailFormat(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
+    }
+
+    /**
+     * Validate string length
+     */
+    validateStringLength(str, minLength = 0, maxLength = 255) {
+        if (typeof str !== 'string') return false;
+        return str.length >= minLength && str.length <= maxLength;
+    }
+
+    /**
+     * Validate array of strings
+     */
+    validateStringArray(arr, maxItems = 100) {
+        if (!Array.isArray(arr)) return false;
+        if (arr.length > maxItems) return false;
+        
+        return arr.every(item => typeof item === 'string' && item.trim().length > 0);
     }
 }
 
