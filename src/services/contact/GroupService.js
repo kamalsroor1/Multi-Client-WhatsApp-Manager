@@ -14,7 +14,7 @@ class GroupService {
     }
 
     /**
-     * Get contacts by group ID with search functionality and last 90 days filter
+     * Get contacts by group ID with search functionality and 90-day filter (للمجموعات المناسبة)
      */
     async getContactsByGroupId(userId, placeId, groupId, options = {}) {
         try {
@@ -25,11 +25,7 @@ class GroupService {
                 search_type = 'all' 
             } = options;
 
-            this.logger.info(`Getting contacts for group ${groupId} with 90-day filter`);
-
-            // حساب تاريخ آخر 90 يوم
-            const ninetyDaysAgo = new Date();
-            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+            this.logger.info(`Getting contacts for group ${groupId}`);
 
             // الحصول على معلومات المجموعة أولاً
             const group = await this.ContactGroup.findOne({
@@ -44,18 +40,26 @@ class GroupService {
                 return this.getAllContactsAsGroup(userId, placeId, groupId, options);
             }
 
-            // بناء الكويري للبحث مع فلتر آخر 90 يوم
+            // تحديد نوع الفلترة بناءً على اسم المجموعة
             let contactQuery = {
                 user_id: userId,
                 place_id: placeId,
-                status: 'active',
-                // فلتر آخر 90 يوم
-                $or: [
+                status: 'active'
+            };
+
+            // إضافة فلتر حسب نوع المجموعة
+            if (group.name === 'آخر الأرقام (90 يوم)') {
+                // فلتر آخر 90 يوم فقط لمجموعة "آخر الأرقام"
+                const ninetyDaysAgo = new Date();
+                ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+                
+                contactQuery.$or = [
                     { last_interaction: { $gte: ninetyDaysAgo } },
                     { last_seen: { $gte: ninetyDaysAgo } },
                     { created_at: { $gte: ninetyDaysAgo } }
-                ]
-            };
+                ];
+            }
+            // للمجموعات الأخرى مثل "كل الأرقام" - بدون فلتر تاريخ
 
             // إذا كانت المجموعة مخصصة، فلتر حسب contact_ids
             if (group.contact_ids && group.contact_ids.length > 0) {
@@ -72,7 +76,7 @@ class GroupService {
                     contactQuery.number = searchTerm;
                 } else { // search_type === 'all'
                     contactQuery.$and = [
-                        contactQuery.$or,
+                        contactQuery.$or || {},
                         {
                             $or: [
                                 { name: searchTerm },
@@ -98,9 +102,9 @@ class GroupService {
                     id: group.group_id,
                     name: group.name,
                     description: group.description,
-                    type: group.group_type || 'manual',
+                    type: group.group_type || 'auto',
                     contact_count: total,
-                    filter_applied: 'last_90_days'
+                    filter_applied: group.name === 'آخر الأرقام (90 يوم)' ? 'last_90_days' : 'all_contacts'
                 },
                 contacts: contacts.map(contact => ({
                     id: contact._id,
@@ -128,15 +132,22 @@ class GroupService {
                     search_term: search,
                     search_type: search_type,
                     results_count: contacts.length
-                } : null,
-                date_filter: {
+                } : null
+            };
+
+            // إضافة معلومات الفلتر الزمني للمجموعات ذات الفلتر
+            if (group.name === 'آخر الأرقام (90 يوم)') {
+                const ninetyDaysAgo = new Date();
+                ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+                
+                result.date_filter = {
                     type: 'last_90_days',
                     from_date: ninetyDaysAgo.toISOString(),
                     to_date: new Date().toISOString()
-                }
-            };
+                };
+            }
 
-            this.logger.info(`Retrieved ${result.contacts.length} contacts for group ${groupId} (last 90 days)${search ? ` with search: "${search}"` : ''}`);
+            this.logger.info(`Retrieved ${result.contacts.length} contacts for group ${groupId}${search ? ` with search: "${search}"` : ''}`);
             return result;
 
         } catch (error) {
@@ -152,18 +163,10 @@ class GroupService {
         try {
             const { page = 1, limit = 50, search, search_type = 'all' } = options;
             
-            const ninetyDaysAgo = new Date();
-            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
             let contactQuery = {
                 user_id: userId,
                 place_id: placeId,
-                status: 'active',
-                $or: [
-                    { last_interaction: { $gte: ninetyDaysAgo } },
-                    { last_seen: { $gte: ninetyDaysAgo } },
-                    { created_at: { $gte: ninetyDaysAgo } }
-                ]
+                status: 'active'
             };
 
             // إضافة البحث
@@ -175,7 +178,6 @@ class GroupService {
                     contactQuery.number = searchTerm;
                 } else {
                     contactQuery.$and = [
-                        contactQuery.$or,
                         {
                             $or: [
                                 { name: searchTerm },
@@ -196,11 +198,11 @@ class GroupService {
             return {
                 group: {
                     id: groupId,
-                    name: 'جميع الارقام',
-                    description: 'جميع جهات الاتصال النشطة',
+                    name: 'كل الأرقام',
+                    description: 'جميع جهات الاتصال المحفوظة',
                     type: 'auto',
                     contact_count: total,
-                    filter_applied: 'last_90_days'
+                    filter_applied: 'all_contacts'
                 },
                 contacts: contacts.map(contact => ({
                     id: contact._id,
@@ -228,12 +230,7 @@ class GroupService {
                     search_term: search,
                     search_type: search_type,
                     results_count: contacts.length
-                } : null,
-                date_filter: {
-                    type: 'last_90_days',
-                    from_date: ninetyDaysAgo.toISOString(),
-                    to_date: new Date().toISOString()
-                }
+                } : null
             };
         } catch (error) {
             this.logger.error('Error getting all contacts as group:', error);
@@ -267,7 +264,7 @@ class GroupService {
             .limit(parseInt(limit))
             .lean();
 
-            // حساب عدد الجهات لكل مجموعة مع فلتر آخر 90 يوم
+            // حساب عدد الجهات لكل مجموعة مع تطبيق الفلاتر المناسبة
             const ninetyDaysAgo = new Date();
             ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
@@ -276,13 +273,17 @@ class GroupService {
                     let contactQuery = {
                         user_id: userId,
                         place_id: placeId,
-                        status: 'active',
-                        $or: [
+                        status: 'active'
+                    };
+
+                    // تطبيق فلتر آخر 90 يوم فقط لمجموعة "آخر الأرقام (90 يوم)"
+                    if (group.name === 'آخر الأرقام (90 يوم)') {
+                        contactQuery.$or = [
                             { last_interaction: { $gte: ninetyDaysAgo } },
                             { last_seen: { $gte: ninetyDaysAgo } },
                             { created_at: { $gte: ninetyDaysAgo } }
-                        ]
-                    };
+                        ];
+                    }
 
                     // إذا كانت المجموعة لها جهات محددة
                     if (group.contact_ids && group.contact_ids.length > 0) {
@@ -295,111 +296,29 @@ class GroupService {
                         id: group.group_id,
                         name: group.name,
                         description: group.description,
-                        type: group.group_type || 'manual',
+                        type: group.group_type || 'auto',
                         contact_count: contactCount,
-                        filter_applied: 'last_90_days',
+                        filter_applied: group.name === 'آخر الأرقام (90 يوم)' ? 'last_90_days' : 'all_contacts',
                         created_at: group.created_at,
                         updated_at: group.updated_at
                     };
                 })
             );
 
-            // إضافة المجموعة الافتراضية "فريق العمل الرئيسي" إذا لم توجد
-            // if (groups.length === 0) {
-            //     const allContactsCount = await this.Contact.countDocuments({
-            //         user_id: userId,
-            //         place_id: placeId,
-            //         status: 'active',
-            //         $or: [
-            //             { last_interaction: { $gte: ninetyDaysAgo } },
-            //             { last_seen: { $gte: ninetyDaysAgo } },
-            //             { created_at: { $gte: ninetyDaysAgo } }
-            //         ]
-            //     });
-
-            //     groupsWithCounts.push({
-            //         id: 'default_group',
-            //         name: 'فريق العمل الرئيسي',
-            //         description: 'جميع جهات الاتصال النشطة',
-            //         type: 'auto',
-            //         contact_count: allContactsCount,
-            //         filter_applied: 'last_90_days',
-            //         created_at: new Date(),
-            //         updated_at: new Date()
-            //     });
-            // }
-
             return {
                 groups: groupsWithCounts,
                 pagination: {
                     page: parseInt(page),
                     limit: parseInt(limit),
-                    total: Math.max(total, 1), // على الأقل المجموعة الافتراضية
-                    pages: Math.ceil(Math.max(total, 1) / limit),
-                    has_next: page < Math.ceil(Math.max(total, 1) / limit),
+                    total: total,
+                    pages: Math.ceil(total / limit),
+                    has_next: page < Math.ceil(total / limit),
                     has_prev: page > 1
-                },
-                date_filter: {
-                    type: 'last_90_days',
-                    from_date: ninetyDaysAgo.toISOString(),
-                    to_date: new Date().toISOString()
                 }
             };
 
         } catch (error) {
             this.logger.error('Error getting user groups:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Create default groups for a user (المطلوبة في WhatsAppService)
-     */
-    async createDefaultGroups(userId, placeId, sessionId = null, contacts = []) {
-        try {
-            this.logger.info(`Creating default groups for user ${userId}, place ${placeId}`);
-
-            // تحقق من وجود المجموعة الافتراضية
-            const existingDefaultGroup = await this.ContactGroup.findOne({
-                user_id: userId,
-                place_id: placeId,
-                group_type: 'auto',
-                name: 'فريق العمل الرئيسي'
-            });
-
-            if (existingDefaultGroup) {
-                this.logger.info(`Default group already exists: ${existingDefaultGroup.group_id}`);
-                return [existingDefaultGroup];
-            }
-
-            // إنشاء المجموعة الافتراضية
-            const defaultGroupId = `default_${userId}_${placeId}`;
-            const contactIds = contacts.map(contact => contact._id || contact.id);
-
-            const defaultGroup = new this.ContactGroup({
-                user_id: userId,
-                place_id: placeId,
-                session_id: sessionId,
-                group_id: defaultGroupId,
-                name: 'فريق العمل الرئيسي',
-                description: 'جميع جهات الاتصال النشطة',
-                contact_ids: contactIds,
-                group_type: 'auto',
-                filter_criteria: {
-                    last_interaction_days: 90
-                },
-                is_active: true,
-                created_at: new Date(),
-                updated_at: new Date()
-            });
-
-            await defaultGroup.save();
-            this.logger.success(`Created default group: ${defaultGroup.name} with ${contactIds.length} contacts`);
-
-            return [defaultGroup];
-
-        } catch (error) {
-            this.logger.error('Error creating default groups:', error);
             throw error;
         }
     }
@@ -526,7 +445,7 @@ class GroupService {
     }
 
     /**
-     * Get group statistics with 90-day filter
+     * Get group statistics
      */
     async getGroupStatistics(userId, placeId) {
         try {
@@ -554,7 +473,13 @@ class GroupService {
                 group_type: 'auto'
             });
 
-            // إحصائيات الجهات مع فلتر آخر 90 يوم
+            // إحصائيات الجهات
+            const totalContacts = await this.Contact.countDocuments({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active'
+            });
+
             const totalContactsLast90Days = await this.Contact.countDocuments({
                 user_id: userId,
                 place_id: placeId,
@@ -577,18 +502,14 @@ class GroupService {
                 total_groups: totalGroups,
                 manual_groups: manualGroups,
                 auto_groups: autoGroups,
+                total_contacts: totalContacts,
                 total_contacts_last_90_days: totalContactsLast90Days,
-                average_contacts_per_group: totalGroups > 0 ? Math.round(totalContactsLast90Days / totalGroups) : 0,
+                average_contacts_per_group: totalGroups > 0 ? Math.round(totalContacts / totalGroups) : 0,
                 most_active_group: mostActiveGroup ? {
                     id: mostActiveGroup.group_id,
                     name: mostActiveGroup.name,
                     last_updated: mostActiveGroup.updated_at
-                } : null,
-                date_filter: {
-                    type: 'last_90_days',
-                    from_date: ninetyDaysAgo.toISOString(),
-                    to_date: new Date().toISOString()
-                }
+                } : null
             };
 
             return stats;
