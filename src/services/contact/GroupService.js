@@ -196,7 +196,7 @@ class GroupService {
             return {
                 group: {
                     id: groupId,
-                    name: 'فريق العمل الرئيسي',
+                    name: 'جميع الارقام',
                     description: 'جميع جهات الاتصال النشطة',
                     type: 'auto',
                     contact_count: total,
@@ -305,29 +305,29 @@ class GroupService {
             );
 
             // إضافة المجموعة الافتراضية "فريق العمل الرئيسي" إذا لم توجد
-            if (groups.length === 0) {
-                const allContactsCount = await this.Contact.countDocuments({
-                    user_id: userId,
-                    place_id: placeId,
-                    status: 'active',
-                    $or: [
-                        { last_interaction: { $gte: ninetyDaysAgo } },
-                        { last_seen: { $gte: ninetyDaysAgo } },
-                        { created_at: { $gte: ninetyDaysAgo } }
-                    ]
-                });
+            // if (groups.length === 0) {
+            //     const allContactsCount = await this.Contact.countDocuments({
+            //         user_id: userId,
+            //         place_id: placeId,
+            //         status: 'active',
+            //         $or: [
+            //             { last_interaction: { $gte: ninetyDaysAgo } },
+            //             { last_seen: { $gte: ninetyDaysAgo } },
+            //             { created_at: { $gte: ninetyDaysAgo } }
+            //         ]
+            //     });
 
-                groupsWithCounts.push({
-                    id: 'default_group',
-                    name: 'فريق العمل الرئيسي',
-                    description: 'جميع جهات الاتصال النشطة',
-                    type: 'auto',
-                    contact_count: allContactsCount,
-                    filter_applied: 'last_90_days',
-                    created_at: new Date(),
-                    updated_at: new Date()
-                });
-            }
+            //     groupsWithCounts.push({
+            //         id: 'default_group',
+            //         name: 'فريق العمل الرئيسي',
+            //         description: 'جميع جهات الاتصال النشطة',
+            //         type: 'auto',
+            //         contact_count: allContactsCount,
+            //         filter_applied: 'last_90_days',
+            //         created_at: new Date(),
+            //         updated_at: new Date()
+            //     });
+            // }
 
             return {
                 groups: groupsWithCounts,

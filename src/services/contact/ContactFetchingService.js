@@ -354,7 +354,7 @@ class ContactFetchingService {
                 user_id: userId,
                 place_id: placeId,
                 group_type: 'auto',
-                name: 'فريق العمل الرئيسي'
+                name: 'جميع الارقام'
             });
 
             if (!defaultGroup) {
@@ -366,8 +366,8 @@ class ContactFetchingService {
                     place_id: placeId,
                     session_id: sessionId,
                     group_id: `default_${userId}_${placeId}`,
-                    name: 'فريق العمل الرئيسي',
-                    description: 'جميع جهات الاتصال النشطة من آخر 90 يوم',
+                    name: 'جميع الارقام',
+                    description: 'جميع جهات الاتصال ',
                     contact_ids: contactIds,
                     group_type: 'auto',
                     filter_criteria: {

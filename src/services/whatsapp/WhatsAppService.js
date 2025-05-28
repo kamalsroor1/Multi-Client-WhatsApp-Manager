@@ -340,9 +340,9 @@ class WhatsAppService {
     }
 
     /**
-     * Get client by session credentials - Enhanced with better validation
+     * Get client by session credentials - Enhanced to support client recreation for completed sessions
      */
-    async getClientByCredentials(userId, placeId) {
+    async getClientByCredentials(userId, placeId, allowRecreation = false) {
         const sessionData = await WhatsAppSession.findOne({ 
             user_id: userId, 
             place_id: placeId
@@ -352,22 +352,33 @@ class WhatsAppService {
             throw new Error('No session found for this user and place');
         }
 
+        // For completed sessions with allowRecreation, we'll handle this differently
+        if (allowRecreation && sessionData.status === 'completed') {
+            const client = this.clientFactory.getClient(sessionData.session_id);
+            if (!client) {
+                // Don't update status to disconnected - let the caller handle recreation
+                throw new Error('Client not available - recreation needed');
+            }
+        }
+
         // Check if session is in a ready state
-        if (!['ready', 'connected', 'fetching_contacts'].includes(sessionData.status)) {
+        if (!['ready', 'connected', 'fetching_contacts', 'completed'].includes(sessionData.status)) {
             throw new Error(`Session is not ready. Current status: ${sessionData.status}`);
         }
 
         const client = this.clientFactory.getClient(sessionData.session_id);
         if (!client) {
-            // Client not found in memory, update session status
-            this.logger.warn(`Client not found in memory for session ${sessionData.session_id}, updating status`);
-            await WhatsAppSession.findOneAndUpdate(
-                { session_id: sessionData.session_id },
-                { 
-                    status: 'disconnected',
-                    updated_at: new Date()
-                }
-            );
+            // Only update status to disconnected for non-completed sessions
+            if (sessionData.status !== 'completed') {
+                this.logger.warn(`Client not found in memory for session ${sessionData.session_id}, updating status`);
+                await WhatsAppSession.findOneAndUpdate(
+                    { session_id: sessionData.session_id },
+                    { 
+                        status: 'disconnected',
+                        updated_at: new Date()
+                    }
+                );
+            }
             throw new Error('Client not available - session may have been disconnected');
         }
 
@@ -563,35 +574,53 @@ class WhatsAppService {
     }
 
     /**
-     * Recreate client from existing session data
+     * Recreate client from existing session data stored on disk
+     * Uses LocalAuth to restore session from persistent storage
      */
     async recreateClientFromSession(sessionData) {
         try {
             this.logger.info(`Recreating client for session: ${sessionData.session_id}`);
             
-            // Create new client
+            // Create client - LocalAuth will automatically restore from disk if session exists
             const client = await this.clientFactory.createClient(sessionData.session_id);
             
             // Setup event handlers
             const eventHandlers = this.createEventHandlers(sessionData);
             this.clientFactory.setupClientEventHandlers(client, sessionData.session_id, eventHandlers);
             
-            // Store client
+            // Store client in memory
             this.clientFactory.storeClient(sessionData.session_id, client, sessionData);
             
-            // Initialize client (this will restore from saved session data)
+            // Initialize client - LocalAuth will restore authentication from disk
             client.initialize();
             
-            // Wait a moment for client to be ready
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Return immediately - client will emit 'ready' event when fully loaded
+            this.logger.success(`Client recreation initiated for session: ${sessionData.session_id}`);
             
-            // Check if client is ready
-            const isReady = await this.clientFactory.isClientReady(sessionData.session_id);
-            if (!isReady) {
-                throw new Error('Recreated client is not ready');
-            }
-            
-            return client;
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Client recreation timeout - session may not be properly authenticated'));
+                }, 30000); // 30 second timeout
+                
+                // Wait for ready event
+                client.once('ready', () => {
+                    clearTimeout(timeout);
+                    this.logger.success(`Client fully recreated and ready: ${sessionData.session_id}`);
+                    resolve(client);
+                });
+                
+                // Handle auth failure
+                client.once('auth_failure', (message) => {
+                    clearTimeout(timeout);
+                    reject(new Error(`Authentication failed during recreation: ${message}`));
+                });
+                
+                // Handle disconnect
+                client.once('disconnected', (reason) => {
+                    clearTimeout(timeout);
+                    reject(new Error(`Client disconnected during recreation: ${reason}`));
+                });
+            });
             
         } catch (error) {
             this.logger.error(`Error recreating client for session ${sessionData.session_id}:`, error);
@@ -625,12 +654,14 @@ class WhatsAppService {
             
             // Try to get existing client or recreate it
             try {
-                const clientData = await this.getClientByCredentials(userId, placeId);
+                const clientData = await this.getClientByCredentials(userId, placeId, true); // allowRecreation = true
                 client = clientData.client;
                 this.logger.info(`Using existing client for session: ${sessionData.session_id}`);
             } catch (clientError) {
                 // If client is not available, try to recreate it for completed sessions
-                if (sessionData.status === 'completed' || sessionData.status === 'ready') {
+                if ((sessionData.status === 'completed' || sessionData.status === 'ready') && 
+                    clientError.message.includes('Client not available')) {
+                    
                     this.logger.info(`Client not available, attempting to recreate for session: ${sessionData.session_id}`);
                     try {
                         client = await this.recreateClientFromSession(sessionData);
