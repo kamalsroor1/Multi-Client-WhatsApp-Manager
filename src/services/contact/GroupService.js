@@ -519,6 +519,134 @@ class GroupService {
             throw error;
         }
     }
+
+
+    /**
+     * Create default groups for a user: كل الأرقام & آخر الأرقام (90 يوم)
+     * @param {number} userId - User ID
+     * @param {number} placeId - Place ID
+     * @param {string} sessionId - Session ID (optional)
+     */
+    async createDefaultGroups(userId, placeId, sessionId = null) {
+        try {
+            this.logger.info(`Creating default groups for user ${userId}, place ${placeId}`);
+
+            const ninetyDaysAgo = new Date();
+            ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+            // 1. مجموعة "كل الأرقام" - جميع جهات الاتصال
+            const allContacts = await this.Contact.find({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active'
+            }).select('_id');
+
+            await this.createOrUpdateGroup({
+                userId,
+                placeId,
+                sessionId,
+                groupId: `all_contacts_${userId}_${placeId}`,
+                name: 'كل الأرقام',
+                description: 'جميع جهات الاتصال المحفوظة',
+                contactIds: allContacts.map(c => c._id),
+                groupType: 'auto'
+            });
+
+            // 2. مجموعة "آخر الأرقام (90 يوم)" - الجهات النشطة من آخر 90 يوم
+            const recentContacts = await this.Contact.find({
+                user_id: userId,
+                place_id: placeId,
+                status: 'active',
+                $or: [
+                    { last_interaction: { $gte: ninetyDaysAgo } },
+                    { last_seen: { $gte: ninetyDaysAgo } },
+                    { created_at: { $gte: ninetyDaysAgo } }
+                ]
+            }).select('_id');
+
+            await this.createOrUpdateGroup({
+                userId,
+                placeId,
+                sessionId,
+                groupId: `recent_contacts_${userId}_${placeId}`,
+                name: 'آخر الأرقام (90 يوم)',
+                description: 'جهات الاتصال النشطة من آخر 90 يوم',
+                contactIds: recentContacts.map(c => c._id),
+                groupType: 'auto'
+            });
+
+            this.logger.success(`Default groups created/updated: ${allContacts.length} total contacts, ${recentContacts.length} recent contacts`);
+
+            return {
+                success: true,
+                totalGroups: 2,
+                allContactsCount: allContacts.length,
+                recentContactsCount: recentContacts.length,
+                groups: [
+                    {
+                        id: `all_contacts_${userId}_${placeId}`,
+                        name: 'كل الأرقام',
+                        contact_count: allContacts.length
+                    },
+                    {
+                        id: `recent_contacts_${userId}_${placeId}`,
+                        name: 'آخر الأرقام (90 يوم)',
+                        contact_count: recentContacts.length
+                    }
+                ]
+            };
+
+        } catch (error) {
+            this.logger.error('Error creating default groups:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Helper function: Create or update a group (يمنع duplicate key errors)
+     * @param {Object} groupData - Group data
+     */
+    async createOrUpdateGroup({ userId, placeId, sessionId, groupId, name, description, contactIds, groupType }) {
+        try {
+            // Check if group exists
+            const existingGroup = await this.ContactGroup.findOne({
+                group_id: groupId,
+                user_id: userId,
+                place_id: placeId
+            });
+
+            if (existingGroup) {
+                // Update existing group
+                existingGroup.contact_ids = contactIds;
+                existingGroup.updated_at = new Date();
+                existingGroup.is_active = true;
+                await existingGroup.save();
+                
+                this.logger.info(`Updated group "${name}" with ${contactIds.length} contacts`);
+            } else {
+                // Create new group
+                const newGroup = new this.ContactGroup({
+                    user_id: userId,
+                    place_id: placeId,
+                    session_id: sessionId,
+                    group_id: groupId,
+                    name: name,
+                    description: description,
+                    contact_ids: contactIds,
+                    group_type: groupType,
+                    is_active: true,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+
+                await newGroup.save();
+                this.logger.info(`Created group "${name}" with ${contactIds.length} contacts`);
+            }
+        } catch (error) {
+            this.logger.error(`Error creating/updating group "${name}":`, error);
+            // Don't throw to avoid disrupting sync process
+        }
+    }
 }
 
 module.exports = GroupService;

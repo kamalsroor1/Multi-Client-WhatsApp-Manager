@@ -553,8 +553,6 @@ class WhatsAppService {
             const defaultGroups = await this.groupService.createDefaultGroups(
                 sessionData.user_id,
                 sessionData.place_id,
-                sessionData.session_id,
-                [] // Empty contacts array initially
             );
             
             // Update session with group count
@@ -674,7 +672,7 @@ class WhatsAppService {
                     throw clientError;
                 }
             }
-            
+
             this.logger.info(`Contact fetch starting for session: ${sessionData.session_id}`);
 
             // Create progress update callback

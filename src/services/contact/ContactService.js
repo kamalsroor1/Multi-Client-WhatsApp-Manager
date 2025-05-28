@@ -51,7 +51,7 @@ class ContactService {
             const allContacts = await this.getAllUserContacts(userId, placeId);
             
             // Create default groups with cumulative contacts
-            await this.groupService.createDefaultGroups(userId, placeId, sessionId, allContacts);
+            await this.groupService.createDefaultGroups(userId, placeId, sessionId);
             
             this.logger.success(`Successfully saved ${savedContacts.length} contacts and updated groups with ${allContacts.length} cumulative contacts`);
             
