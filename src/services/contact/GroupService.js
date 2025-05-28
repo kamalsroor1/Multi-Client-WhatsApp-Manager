@@ -1,5 +1,4 @@
 const ContactGroup = require('../../../models/ContactGroup');
-const ContactService = require('./ContactService');
 const Logger = require('../../utils/Logger');
 
 /**
@@ -8,7 +7,6 @@ const Logger = require('../../utils/Logger');
  */
 class GroupService {
     constructor() {
-        this.contactService = new ContactService();
         this.logger = new Logger('GroupService');
     }
 
