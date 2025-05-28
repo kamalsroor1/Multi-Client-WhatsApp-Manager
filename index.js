@@ -102,6 +102,54 @@ app.get('/api/whatsapp/status', async (req, res) => {
     }
 });
 
+// NEW: Get contact fetching progress
+app.get('/api/whatsapp/contacts/progress', async (req, res) => {
+    try {
+        const { user_id, place_id } = req.query;
+
+        if (!user_id || !place_id) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'user_id and place_id are required' 
+            });
+        }
+
+        const status = await whatsappService.getSessionStatus(
+            parseInt(user_id), 
+            parseInt(place_id)
+        );
+
+        if (!status.session_exists) {
+            return res.status(404).json({ 
+                success: false, 
+                error: 'No session found' 
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                session_id: status.session_id,
+                status: status.status,
+                contacts_fetch_progress: status.contacts_fetch_progress,
+                contacts_fetch_completed: status.contacts_fetch_completed,
+                contacts_fetch_error: status.contacts_fetch_error,
+                total_contacts: status.total_contacts,
+                total_groups: status.total_groups,
+                last_contacts_sync: status.last_contacts_sync,
+                is_fetching: status.status === 'fetching_contacts'
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting contact progress:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
 // Get all groups for a user
 app.get('/api/whatsapp/groups', async (req, res) => {
     try {
@@ -609,12 +657,13 @@ app.post('/api/whatsapp/send-message', validateImageUrl, async (req, res) => {
         success: true, 
         message: 'WhatsApp Integration Service is running',
         timestamp: new Date().toISOString(),
-        version: '1.0.0',
+        version: '1.1.0',
         features: {
             image_support: 'URL-based',
             bulk_messaging: true,
             group_management: true,
-            contact_search: true
+            contact_search: true,
+            background_contact_fetching: true
         }
     });
  });
@@ -708,7 +757,7 @@ app.post('/api/whatsapp/send-message', validateImageUrl, async (req, res) => {
     });
  });
  
- // 404 handler
+ // 404 handler - commented out to allow all routes
 //  app.use('*', (req, res) => {
 //     res.status(404).json({ 
 //         success: false, 
@@ -716,6 +765,7 @@ app.post('/api/whatsapp/send-message', validateImageUrl, async (req, res) => {
 //         available_endpoints: {
 //             'POST /api/whatsapp/init': 'Initialize WhatsApp session',
 //             'GET /api/whatsapp/status': 'Get session status',
+//             'GET /api/whatsapp/contacts/progress': 'Get contact fetching progress',
 //             'GET /api/whatsapp/groups': 'Get user groups',
 //             'POST /api/whatsapp/send-message': 'Send message to contact',
 //             'POST /api/whatsapp/groups/:group_id/send-message': 'Send message to group',
@@ -731,6 +781,7 @@ app.post('/api/whatsapp/send-message', validateImageUrl, async (req, res) => {
     console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
     console.log(`🖼️  Image support: URL-based downloading`);
     console.log(`📱 Ready for Laravel integration`);
+    console.log(`⚡ Background contact fetching: ENABLED`);
  });
  
  // Graceful shutdown
