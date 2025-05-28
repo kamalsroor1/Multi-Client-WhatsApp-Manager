@@ -1,1 +1,330 @@
-const Logger = require('../../utils/Logger');\nconst ContactService = require('../contact/ContactService');\n\n/**\n * Service for managing background contact fetching\n * Implements Single Responsibility Principle\n */\nclass ContactFetchingService {\n    constructor() {\n        this.logger = new Logger('ContactFetchingService');\n        this.contactService = new ContactService();\n    }\n\n    /**\n     * Fetch contacts in background with progress tracking\n     */\n    async fetchContactsInBackground(client, userId, placeId, sessionId, onProgressUpdate) {\n        try {\n            this.logger.start(`Background contact fetch for session ${sessionId}`);\n            \n            // Notify start of fetching\n            if (onProgressUpdate) {\n                await onProgressUpdate({\n                    status: 'fetching_contacts',\n                    progress: 0\n                });\n            }\n\n            // Get all contacts from WhatsApp\n            const contacts = await client.getContacts();\n            const validContacts = this.filterValidContacts(contacts);\n            \n            this.logger.info(`Found ${validContacts.length} valid contacts to process`);\n            \n            // Process contacts in batches\n            const contactsWithDetails = await this.processContactsInBatches(\n                validContacts, \n                client, \n                sessionId,\n                onProgressUpdate\n            );\n            \n            // Save contacts to database\n            this.logger.info(`Saving ${contactsWithDetails.length} contacts to database...`);\n            const savedContacts = await this.contactService.saveContacts(\n                userId, \n                placeId, \n                sessionId, \n                contactsWithDetails\n            );\n            \n            // Update final status\n            if (onProgressUpdate) {\n                await onProgressUpdate({\n                    status: 'connected',\n                    progress: 100,\n                    completed: true,\n                    total_contacts: savedContacts.length\n                });\n            }\n            \n            this.logger.complete(`Background contact fetch for session ${sessionId}: ${savedContacts.length} contacts`);\n            \n            return {\n                success: true,\n                total_contacts: savedContacts.length,\n                processed_contacts: contactsWithDetails.length\n            };\n            \n        } catch (error) {\n            this.logger.error(`Error in background contact fetch for session ${sessionId}:`, error);\n            \n            // Update error status\n            if (onProgressUpdate) {\n                await onProgressUpdate({\n                    status: 'connected',\n                    progress: 0,\n                    error: error.message\n                });\n            }\n            \n            throw error;\n        }\n    }\n\n    /**\n     * Filter valid WhatsApp contacts\n     */\n    filterValidContacts(contacts) {\n        return contacts.filter(\n            contact => contact.id?.server === 'c.us' && contact.isWAContact\n        );\n    }\n\n    /**\n     * Process contacts in batches to avoid overwhelming the system\n     */\n    async processContactsInBatches(validContacts, client, sessionId, onProgressUpdate) {\n        const contactsWithDetails = [];\n        const batchSize = 10; // Process 10 contacts at a time\n        const totalContacts = validContacts.length;\n        \n        for (let i = 0; i < validContacts.length; i += batchSize) {\n            const batch = validContacts.slice(i, i + batchSize);\n            \n            this.logger.debug(`Processing batch ${Math.ceil((i + 1) / batchSize)} of ${Math.ceil(totalContacts / batchSize)}`);\n            \n            // Process batch in parallel\n            const batchPromises = batch.map(contact => \n                this.processSingleContact(contact, client)\n            );\n            \n            // Wait for current batch to complete\n            const batchResults = await Promise.allSettled(batchPromises);\n            \n            // Extract successful results\n            const successfulResults = batchResults\n                .filter(result => result.status === 'fulfilled')\n                .map(result => result.value);\n                \n            contactsWithDetails.push(...successfulResults);\n            \n            // Update progress\n            const progress = Math.round(((i + batchSize) / totalContacts) * 100);\n            const currentProgress = Math.min(progress, 100);\n            \n            if (onProgressUpdate) {\n                await onProgressUpdate({\n                    status: 'fetching_contacts',\n                    progress: currentProgress\n                });\n            }\n            \n            this.logger.progress(\n                'Contact fetch progress', \n                Math.min(i + batchSize, totalContacts), \n                totalContacts\n            );\n            \n            // Small delay between batches to prevent overwhelming\n            if (i + batchSize < validContacts.length) {\n                await this.delay(100);\n            }\n        }\n        \n        return contactsWithDetails;\n    }\n\n    /**\n     * Process a single contact with timeout and error handling\n     */\n    async processSingleContact(contact, client) {\n        try {\n            // Get profile picture with timeout\n            const profilePicUrl = await this.getProfilePictureWithTimeout(\n                client, \n                contact.id._serialized, \n                5000\n            );\n            \n            return {\n                name: contact.name || contact.pushname || contact.verifiedName || '-',\n                number: contact.id.user,\n                whatsapp_id: contact.id._serialized,\n                profile_picture_url: profilePicUrl,\n                is_business: contact.isBusiness || false,\n                business_info: contact.businessProfile || {},\n                last_interaction: contact.lastSeen || null,\n                last_seen: contact.lastSeen || null\n            };\n        } catch (contactError) {\n            this.logger.warn(`Error getting details for contact ${contact.id.user}:`, contactError);\n            \n            // Still return basic contact info on error\n            return {\n                name: contact.name || contact.pushname || '-',\n                number: contact.id.user,\n                whatsapp_id: contact.id._serialized,\n                profile_picture_url: null,\n                is_business: false,\n                business_info: {},\n                last_interaction: null,\n                last_seen: null\n            };\n        }\n    }\n\n    /**\n     * Get profile picture with timeout\n     */\n    async getProfilePictureWithTimeout(client, whatsappId, timeoutMs = 5000) {\n        try {\n            const profilePicPromise = client.getProfilePicUrl(whatsappId);\n            \n            const timeoutPromise = new Promise((_, reject) => \n                setTimeout(() => reject(new Error('timeout')), timeoutMs)\n            );\n            \n            return await Promise.race([profilePicPromise, timeoutPromise]);\n        } catch (error) {\n            // Return null if profile picture fetch fails\n            return null;\n        }\n    }\n\n    /**\n     * Utility function for delays\n     */\n    async delay(ms) {\n        return new Promise(resolve => setTimeout(resolve, ms));\n    }\n\n    /**\n     * Estimate time remaining for contact fetching\n     */\n    estimateTimeRemaining(processed, total, startTime) {\n        if (processed === 0) return null;\n        \n        const elapsed = Date.now() - startTime;\n        const avgTimePerContact = elapsed / processed;\n        const remaining = (total - processed) * avgTimePerContact;\n        \n        return {\n            estimated_remaining_ms: Math.round(remaining),\n            estimated_remaining_minutes: Math.round(remaining / 60000),\n            avg_time_per_contact_ms: Math.round(avgTimePerContact)\n        };\n    }\n\n    /**\n     * Get contact fetching statistics\n     */\n    getContactFetchingStats(validContacts, processedContacts, startTime) {\n        const endTime = Date.now();\n        const totalTime = endTime - startTime;\n        \n        return {\n            total_found: validContacts.length,\n            successfully_processed: processedContacts.length,\n            failed_to_process: validContacts.length - processedContacts.length,\n            total_time_ms: totalTime,\n            total_time_minutes: Math.round(totalTime / 60000),\n            avg_time_per_contact: Math.round(totalTime / processedContacts.length),\n            success_rate: Math.round((processedContacts.length / validContacts.length) * 100)\n        };\n    }\n}\n\nmodule.exports = ContactFetchingService;\n
+const Logger = require('../../utils/Logger');
+
+/**
+ * Service for managing background contact fetching
+ * Implements Single Responsibility Principle
+ */
+class ContactFetchingService {
+    constructor() {
+        this.logger = new Logger('ContactFetchingService');
+    }
+
+    /**
+     * Fetch contacts in background with progress tracking
+     */
+    async fetchContactsInBackground(client, userId, placeId, sessionId, onProgressUpdate) {
+        try {
+            this.logger.start(`Background contact fetch for session ${sessionId}`);
+            
+            // Notify start of fetching
+            if (onProgressUpdate) {
+                await onProgressUpdate({
+                    status: 'fetching_contacts',
+                    progress: 0
+                });
+            }
+
+            // Get all contacts from WhatsApp
+            const contacts = await client.getContacts();
+            const validContacts = this.filterValidContacts(contacts);
+            
+            this.logger.info(`Found ${validContacts.length} valid contacts to process`);
+            
+            // Process contacts in batches
+            const contactsWithDetails = await this.processContactsInBatches(
+                validContacts, 
+                client, 
+                sessionId,
+                onProgressUpdate
+            );
+            
+            // Import ContactService here to avoid circular dependency
+            const ContactService = require('../contact/ContactService');
+            const contactService = new ContactService();
+            
+            // Save contacts to database
+            this.logger.info(`Saving ${contactsWithDetails.length} contacts to database...`);
+            const savedContacts = await contactService.saveContacts(
+                userId, 
+                placeId, 
+                sessionId, 
+                contactsWithDetails
+            );
+            
+            // Update final status
+            if (onProgressUpdate) {
+                await onProgressUpdate({
+                    status: 'connected',
+                    progress: 100,
+                    completed: true,
+                    total_contacts: savedContacts.length
+                });
+            }
+            
+            this.logger.complete(`Background contact fetch for session ${sessionId}: ${savedContacts.length} contacts`);
+            
+            return {
+                success: true,
+                total_contacts: savedContacts.length,
+                processed_contacts: contactsWithDetails.length
+            };
+            
+        } catch (error) {
+            this.logger.error(`Error in background contact fetch for session ${sessionId}:`, error);
+            
+            // Update error status
+            if (onProgressUpdate) {
+                await onProgressUpdate({
+                    status: 'connected',
+                    progress: 0,
+                    error: error.message
+                });
+            }
+            
+            throw error;
+        }
+    }
+
+    /**
+     * Filter valid WhatsApp contacts
+     */
+    filterValidContacts(contacts) {
+        return contacts.filter(
+            contact => contact.id?.server === 'c.us' && contact.isWAContact
+        );
+    }
+
+    /**
+     * Process contacts in batches to avoid overwhelming the system
+     */
+    async processContactsInBatches(validContacts, client, sessionId, onProgressUpdate) {
+        const contactsWithDetails = [];
+        const batchSize = 10; // Process 10 contacts at a time
+        const totalContacts = validContacts.length;
+        
+        for (let i = 0; i < validContacts.length; i += batchSize) {
+            const batch = validContacts.slice(i, i + batchSize);
+            
+            this.logger.debug(`Processing batch ${Math.ceil((i + 1) / batchSize)} of ${Math.ceil(totalContacts / batchSize)}`);
+            
+            // Process batch in parallel
+            const batchPromises = batch.map(contact => 
+                this.processSingleContact(contact, client)
+            );
+            
+            // Wait for current batch to complete
+            const batchResults = await Promise.allSettled(batchPromises);
+            
+            // Extract successful results
+            const successfulResults = batchResults
+                .filter(result => result.status === 'fulfilled')
+                .map(result => result.value);
+                
+            contactsWithDetails.push(...successfulResults);
+            
+            // Update progress
+            const progress = Math.round(((i + batchSize) / totalContacts) * 100);
+            const currentProgress = Math.min(progress, 100);
+            
+            if (onProgressUpdate) {
+                await onProgressUpdate({
+                    status: 'fetching_contacts',
+                    progress: currentProgress
+                });
+            }
+            
+            this.logger.progress(
+                'Contact fetch progress', 
+                Math.min(i + batchSize, totalContacts), 
+                totalContacts
+            );
+            
+            // Small delay between batches to prevent overwhelming
+            if (i + batchSize < validContacts.length) {
+                await this.delay(100);
+            }
+        }
+        
+        return contactsWithDetails;
+    }
+
+    /**
+     * Process a single contact with timeout and error handling
+     */
+    async processSingleContact(contact, client) {
+        try {
+            // Validate contact object
+            if (!contact || !contact.id || !contact.id.user) {
+                throw new Error('Invalid contact object');
+            }
+
+            // Get profile picture with timeout
+            const profilePicUrl = await this.getProfilePictureWithTimeout(
+                client, 
+                contact.id._serialized, 
+                5000
+            );
+            
+            return {
+                name: contact.name || contact.pushname || contact.verifiedName || '-',
+                number: contact.id.user,
+                whatsapp_id: contact.id._serialized,
+                profile_picture_url: profilePicUrl,
+                is_business: contact.isBusiness || false,
+                business_info: contact.businessProfile || {},
+                last_interaction: contact.lastSeen || null,
+                last_seen: contact.lastSeen || null
+            };
+        } catch (contactError) {
+            this.logger.warn(`Error getting details for contact ${contact.id?.user || 'unknown'}:`, contactError);
+            
+            // Still return basic contact info on error
+            return {
+                name: contact.name || contact.pushname || '-',
+                number: contact.id?.user || 'unknown',
+                whatsapp_id: contact.id?._serialized || 'unknown',
+                profile_picture_url: null,
+                is_business: false,
+                business_info: {},
+                last_interaction: null,
+                last_seen: null
+            };
+        }
+    }
+
+    /**
+     * Get profile picture with timeout
+     */
+    async getProfilePictureWithTimeout(client, whatsappId, timeoutMs = 5000) {
+        try {
+            if (!whatsappId) {
+                return null;
+            }
+
+            const profilePicPromise = client.getProfilePicUrl(whatsappId);
+            
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('timeout')), timeoutMs)
+            );
+            
+            return await Promise.race([profilePicPromise, timeoutPromise]);
+        } catch (error) {
+            // Return null if profile picture fetch fails
+            return null;
+        }
+    }
+
+    /**
+     * Utility function for delays
+     */
+    async delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Estimate time remaining for contact fetching
+     */
+    estimateTimeRemaining(processed, total, startTime) {
+        if (processed === 0) return null;
+        
+        const elapsed = Date.now() - startTime;
+        const avgTimePerContact = elapsed / processed;
+        const remaining = (total - processed) * avgTimePerContact;
+        
+        return {
+            estimated_remaining_ms: Math.round(remaining),
+            estimated_remaining_minutes: Math.round(remaining / 60000),
+            avg_time_per_contact_ms: Math.round(avgTimePerContact)
+        };
+    }
+
+    /**
+     * Get contact fetching statistics
+     */
+    getContactFetchingStats(validContacts, processedContacts, startTime) {
+        const endTime = Date.now();
+        const totalTime = endTime - startTime;
+        
+        return {
+            total_found: validContacts.length,
+            successfully_processed: processedContacts.length,
+            failed_to_process: validContacts.length - processedContacts.length,
+            total_time_ms: totalTime,
+            total_time_minutes: Math.round(totalTime / 60000),
+            avg_time_per_contact: Math.round(totalTime / processedContacts.length),
+            success_rate: Math.round((processedContacts.length / validContacts.length) * 100)
+        };
+    }
+
+    /**
+     * Validate contact data before processing
+     */
+    validateContact(contact) {
+        return contact && 
+               contact.id && 
+               contact.id.user &&
+               contact.id._serialized &&
+               contact.id.server === 'c.us' &&
+               contact.isWAContact;
+    }
+
+    /**
+     * Clean and format contact name
+     */
+    formatContactName(contact) {
+        const name = contact.name || contact.pushname || contact.verifiedName;
+        if (!name) return '-';
+        
+        // Clean name - remove special characters and trim
+        return name.replace(/[^\w\s]/gi, '').trim().substring(0, 100) || '-';
+    }
+
+    /**
+     * Get contact business information safely
+     */
+    getBusinessInfo(contact) {
+        if (!contact.isBusiness || !contact.businessProfile) {
+            return {};
+        }
+
+        return {
+            business_name: contact.businessProfile.businessName || null,
+            category: contact.businessProfile.category || null,
+            description: contact.businessProfile.description || null,
+            website: contact.businessProfile.website || null,
+            email: contact.businessProfile.email || null,
+            address: contact.businessProfile.address || null
+        };
+    }
+
+    /**
+     * Process contacts with retry mechanism
+     */
+    async processContactWithRetry(contact, client, maxRetries = 2) {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                return await this.processSingleContact(contact, client);
+            } catch (error) {
+                if (attempt === maxRetries) {
+                    // Last attempt failed, return basic info
+                    this.logger.warn(`Failed to process contact ${contact.id?.user} after ${maxRetries + 1} attempts`);
+                    return {
+                        name: this.formatContactName(contact),
+                        number: contact.id?.user || 'unknown',
+                        whatsapp_id: contact.id?._serialized || 'unknown',
+                        profile_picture_url: null,
+                        is_business: false,
+                        business_info: {},
+                        last_interaction: null,
+                        last_seen: null
+                    };
+                }
+                
+                // Wait before retry
+                await this.delay(1000 * (attempt + 1));
+            }
+        }
+    }
+}
+
+module.exports = ContactFetchingService;
